@@ -1,0 +1,118 @@
+{
+  "theme": "dark",
+  "archetype": "2 (Performance Pro)",
+  "colors": {
+    "background": "#09090B",
+    "surface": "#18181B",
+    "surface_accent": "#27272A",
+    "primary": "#FF4500",
+    "primary_hover": "#FF6A33",
+    "text_primary": "#FAFAFA",
+    "text_secondary": "#A1A1AA",
+    "success": "#22C55E",
+    "danger": "#EF4444",
+    "warning": "#F59E0B",
+    "border": "#27272A"
+  },
+  "typography": {
+    "fonts": {
+      "heading": "'Bebas Neue', sans-serif",
+      "body": "'Manrope', sans-serif"
+    },
+    "scales": {
+      "h1": "text-5xl sm:text-6xl tracking-tight leading-none uppercase",
+      "h2": "text-4xl sm:text-5xl tracking-tight leading-none uppercase",
+      "h3": "text-2xl sm:text-3xl tracking-tight uppercase",
+      "h4": "text-xl font-bold uppercase",
+      "body": "text-base leading-relaxed",
+      "small": "text-sm text-secondary font-medium tracking-wide",
+      "overline": "text-xs font-bold uppercase tracking-[0.2em] text-secondary"
+    }
+  },
+  "layout_and_spacing": {
+    "philosophy": "Mobile-first, dense but readable data layers, heavy focus on athletic tension and clarity. Deep shadows replaced by strong border contrasts.",
+    "container": "w-full max-w-md mx-auto min-h-screen bg-background text-text-primary pb-20 relative overflow-x-hidden",
+    "card_spacing": "p-6 gap-4",
+    "grid_patterns": {
+      "bento_dashboard": "grid grid-cols-2 gap-4",
+      "stats_list": "flex flex-col gap-2"
+    },
+    "navigation": "fixed bottom-0 w-full max-w-md mx-auto bg-surface/90 backdrop-blur-xl border-t border-border z-50 flex justify-around items-center h-20 pb-safe"
+  },
+  "components": {
+    "buttons": {
+      "primary": "bg-primary text-white font-bold uppercase tracking-wide rounded-none border-b-4 border-orange-700 hover:translate-y-[2px] hover:border-b-2 active:border-b-0 active:translate-y-[4px] transition-all h-14 flex items-center justify-center w-full text-xl",
+      "secondary": "bg-surface_accent text-text_primary font-bold uppercase tracking-wide rounded-none border-b-4 border-zinc-900 hover:translate-y-[2px] hover:border-b-2 active:border-b-0 active:translate-y-[4px] transition-all h-14 flex items-center justify-center w-full text-xl"
+    },
+    "voting_cards": {
+      "yes": "flex-1 aspect-square bg-success/20 border-2 border-success rounded-xl flex flex-col items-center justify-center gap-2 hover:bg-success/30 transition-colors",
+      "no": "flex-1 aspect-square bg-danger/20 border-2 border-danger rounded-xl flex flex-col items-center justify-center gap-2 hover:bg-danger/30 transition-colors",
+      "reserve": "flex-1 aspect-square bg-warning/20 border-2 border-warning rounded-xl flex flex-col items-center justify-center gap-2 hover:bg-warning/30 transition-colors"
+    },
+    "cards": {
+      "base": "bg-surface border border-border rounded-xl p-6",
+      "player_card": "bg-surface border border-border rounded-xl p-4 flex items-center gap-4",
+      "stat_row": "flex justify-between items-center py-3 border-b border-border last:border-0"
+    },
+    "pitch_view": {
+      "container": "relative w-full aspect-[2/3] bg-surface rounded-xl overflow-hidden border-2 border-border my-6",
+      "player_marker": "absolute w-12 h-12 -ml-6 -mt-6 rounded-full border-2 border-primary bg-surface flex items-center justify-center shadow-[0_0_15px_rgba(255,69,0,0.5)] z-10 font-heading text-xl"
+    },
+    "inputs": {
+      "text": "w-full bg-background border border-border rounded-lg px-4 h-12 text-base focus:border-primary focus:ring-1 focus:ring-primary outline-none transition-all",
+      "label": "text-sm font-bold text-text_secondary uppercase tracking-wider mb-2 block"
+    }
+  },
+  "visual_enhancers": {
+    "borders": "Use strict 1px or 2px borders (border-border) for definition instead of soft drop shadows, fitting the 'Tactical Athletic' archetype.",
+    "glassmorphism": "Only used for the bottom navigation bar and sticky header (bg-surface/90 backdrop-blur-xl border-border).",
+    "icons": "Use Phosphor Icons (duotone or bold) or lucide-react with high contrast.",
+    "active_states": "Interactive elements must lighten on hover and scale down slightly (scale-95) on active/press."
+  },
+  "testing_rules": {
+    "required_attributes": "All interactive elements (buttons, inputs, tabs, cards) MUST include 'data-testid' using kebab-case role-based naming (e.g., data-testid='vote-yes-button', data-testid='nav-home-tab')."
+  },
+  "media": {
+    "logos": {
+      "club_logo": {
+        "url": "https://images.unsplash.com/photo-1650367926557-3068895622b2?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1Nzd8MHwxfHNlYXJjaHwxfHxvcmFuZ2UlMjBiaXJkfGVufDB8fHx8MTc3NjQ2NDU3MXww&ixlib=rb-4.1.0&q=85",
+        "description": "Orange bird representing the Dodo mascot, used as a placeholder for the club badge."
+      }
+    },
+    "backgrounds": {
+      "football_pitch": {
+        "url": "https://images.unsplash.com/photo-1635272340267-84d197fe6ded?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjY2NzF8MHwxfHNlYXJjaHwyfHxmb290YmFsbCUyMHBpdGNoJTIwb3ZlcmhlYWR8ZW58MHx8fHwxNzc2NDY0NTcxfDA&ixlib=rb-4.1.0&q=85",
+        "description": "Overhead view of a football pitch, perfect for setting the background of the lineup visualization component."
+      },
+      "hero_texture": {
+        "url": "https://images.unsplash.com/photo-1599204607024-c25aceee0337?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NzR8MHwxfHNlYXJjaHwxfHxzb2NjZXIlMjBiYWxsJTIwZGFya3xlbnwwfHx8fDE3NzY0NjQ1NzF8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Close up of a soccer goal net on a dark background. Great for a subtle background texture in the header or profile section."
+      }
+    },
+    "avatars": {
+      "player_1": {
+        "url": "https://images.unsplash.com/photo-1764842262144-e58d386299ac?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMzV8MHwxfHNlYXJjaHwxfHxzb2NjZXIlMjBwbGF5ZXIlMjBwb3J0cmFpdHxlbnwwfHx8fDE3NzY0NjQ1NTh8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Soccer player in uniform for avatar mockups."
+      },
+      "player_2": {
+        "url": "https://images.pexels.com/photos/5246967/pexels-photo-5246967.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "Player ready to play, useful for leaderboard mockups."
+      },
+      "player_3": {
+        "url": "https://images.unsplash.com/photo-1632300951015-42d7df909581?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjAzMzV8MHwxfHNlYXJjaHwzfHxzb2NjZXIlMjBwbGF5ZXIlMjBwb3J0cmFpdHxlbnwwfHx8fDE3NzY0NjQ1NTh8MA&ixlib=rb-4.1.0&q=85",
+        "description": "Group of players, useful for match history thumbnails."
+      }
+    }
+  },
+  "instructions_to_main_agent": [
+    "Build the app as a responsive web app focused entirely on mobile viewport dimensions (max-width: md, centered on desktop).",
+    "Use standard React (Vite) + Tailwind + Shadcn components (customized to match the tactical dark theme).",
+    "Implement a fixed bottom navigation bar with 4 tabs: Home, Squad, Matches, Profile.",
+    "For typography, import Bebas Neue (for headings) and Manrope (for body) via Google Fonts.",
+    "Lineup Visualization: Use the provided 'football_pitch' image as a background in a relative container. Map players using absolute positioning based on generic coordinates for a 5-a-side formation.",
+    "Voting UI: Use large touch-friendly areas (Yes = green, No = red, Reserve = amber). These should dominate the 'Home' or 'Upcoming Match' screen.",
+    "Avoid using Shadcn's default rounded cards. Override them with sharper edges (rounded-xl at most) and distinct borders (border-border).",
+    "Ensure the app functions without requiring any external native dependencies since it will be built with React/Tailwind on the web.",
+    "Apply `data-testid` to all crucial elements for the testing agent."
+  ]
+}
