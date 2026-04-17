@@ -1,0 +1,106 @@
+{
+  "summary": "Backend testing complete - All 24 tests passed. Comprehensive testing of authentication, user management, club config, match CRUD, voting, lineup generation, result recording with stat tracking, and permission controls.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_auth.py",
+    "/app/backend/tests/test_users.py",
+    "/app/backend/tests/test_config.py",
+    "/app/backend/tests/test_matches.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "✅ All MongoDB _id properly excluded from responses",
+    "✅ JWT Bearer token authentication correctly implemented",
+    "✅ Admin seeding is idempotent",
+    "✅ Rating calculation formula correct: goals*3 + assists*2 + matches_played",
+    "✅ Vote overwriting works correctly (single vote per user per match)",
+    "✅ Lineup generation uses snake draft by rating",
+    "✅ Result editing properly reverts prior stats before applying new",
+    "✅ Match deletion reverts all stat contributions",
+    "✅ Permission checks working: admin, editor (can_edit_matches), and regular user roles",
+    "✅ Config GET is public (no auth required), PUT is admin-only",
+    "✅ All endpoints return proper HTTP status codes (200, 400, 401, 403, 404)",
+    "✅ Input validation working (team_size min 3, max 11)"
+  ],
+  "updated_files": [
+    "/app/backend/tests/conftest.py",
+    "/app/backend/tests/test_auth.py",
+    "/app/backend/tests/test_users.py",
+    "/app/backend/tests/test_config.py",
+    "/app/backend/tests/test_matches.py"
+  ],
+  "success_rate": {
+    "backend": "100% (24/24 tests passed)",
+    "frontend": "N/A (backend-only testing)"
+  },
+  "seed_data_creation": "Tests create unique users per test run using timestamp-based email addresses (TEST_*_{timestamp}@clubdodo.com). Admin user (admin@clubdodo.com / dodo2026) is seeded on startup.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All backend endpoints tested and working correctly. JWT Bearer tokens used (NOT cookies). Rating formula verified: goals*3 + assists*2 + matches_played. Snake draft lineup generation working. Stat tracking with proper reversion on edit/delete. Permission system (admin/editor/user) functioning correctly. No MongoDB _id exposure. Team size validation: min 3, max 11.",
+  "tests_executed": {
+    "auth": [
+      "POST /api/auth/register - creates user, returns {token, user}",
+      "POST /api/auth/login - admin login returns admin role",
+      "POST /api/auth/login - invalid credentials returns 401",
+      "GET /api/auth/me - with Bearer token returns user",
+      "GET /api/auth/me - without token returns 401",
+      "GET /api/auth/me - with invalid token returns 401"
+    ],
+    "users": [
+      "GET /api/users - lists users sorted by rating desc",
+      "PUT /api/users/me - updates name, shirt_number, profile_picture",
+      "POST /api/users/grant-edit - admin toggles can_edit_matches",
+      "POST /api/users/grant-edit - non-admin returns 403"
+    ],
+    "config": [
+      "GET /api/config - public, no auth required",
+      "PUT /api/config - admin only, updates club_name and club_logo",
+      "PUT /api/config - non-admin returns 403"
+    ],
+    "matches": [
+      "POST /api/matches - any authenticated user can create",
+      "GET /api/matches - lists all matches",
+      "GET /api/matches/{id} - returns match with votes array",
+      "POST /api/matches/{id}/vote - stores vote, overwrites previous",
+      "POST /api/matches/{id}/generate-lineup - editor only, snake draft by rating",
+      "POST /api/matches/{id}/generate-lineup - non-editor returns 403",
+      "POST /api/matches/{id}/result - editor only, updates stats and rating",
+      "POST /api/matches/{id}/result - editing reverts prior stats",
+      "POST /api/matches/{id}/result - non-editor returns 403",
+      "DELETE /api/matches/{id} - editor only, reverts stats",
+      "DELETE /api/matches/{id} - non-editor returns 403"
+    ]
+  },
+  "verified_requirements": [
+    "✅ POST /api/auth/register creates user, returns {token, user}",
+    "✅ POST /api/auth/login with admin returns admin role",
+    "✅ GET /api/auth/me with Bearer token returns user",
+    "✅ GET /api/users lists users sorted by rating desc",
+    "✅ PUT /api/users/me updates name, shirt_number, profile_picture",
+    "✅ POST /api/users/grant-edit (admin only) toggles can_edit_matches",
+    "✅ GET /api/config returns club_name/club_logo (public, no auth required)",
+    "✅ PUT /api/config (admin only) updates club_name and club_logo",
+    "✅ POST /api/matches creates match (any authenticated user)",
+    "✅ GET /api/matches lists matches",
+    "✅ GET /api/matches/{id} returns match with votes array containing {user_id, name, shirt_number, rating, vote}",
+    "✅ POST /api/matches/{id}/vote stores vote (yes/no/reserve), overwrites previous vote",
+    "✅ POST /api/matches/{id}/generate-lineup (editor only) splits yes voters using snake draft by rating",
+    "✅ POST /api/matches/{id}/result records goals/assists, increments matches_played, updates user stats",
+    "✅ DELETE /api/matches/{id} (editor only) removes match and reverts stat contributions",
+    "✅ Player rating = goals*3 + assists*2 + matches_played (verified after recording result)",
+    "✅ Non-admin user cannot grant edit access (403)",
+    "✅ User without can_edit_matches & not admin cannot generate lineup or record result (403)",
+    "✅ No MongoDB _id exposure in any response"
+  ]
+}
