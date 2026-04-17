@@ -49,6 +49,7 @@ export default function ProfileScreen() {
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [name, setName] = useState(user?.name || '');
   const [shirt, setShirt] = useState(user?.shirt_number ? String(user.shirt_number) : '');
+  const [position, setPosition] = useState<User['preferred_position']>(user?.preferred_position || null);
   const [pic, setPic] = useState<string | null>(user?.profile_picture || null);
   const [savingProfile, setSavingProfile] = useState(false);
   const [savingClub, setSavingClub] = useState(false);
@@ -76,6 +77,7 @@ export default function ProfileScreen() {
       if (user) {
         setName(user.name);
         setShirt(user.shirt_number ? String(user.shirt_number) : '');
+        setPosition(user.preferred_position || null);
         setPic(user.profile_picture);
       }
     }, [load, user])
@@ -87,6 +89,7 @@ export default function ProfileScreen() {
       const n = shirt ? parseInt(shirt, 10) : null;
       const body: any = { name: name.trim() };
       if (n != null && Number.isFinite(n)) body.shirt_number = n;
+      if (position) body.preferred_position = position;
       if (pic !== user?.profile_picture) body.profile_picture = pic;
       await api('/users/me', { method: 'PUT', body });
       await refresh();
@@ -205,6 +208,23 @@ export default function ProfileScreen() {
             placeholder="10"
             placeholderTextColor={colors.textMuted}
           />
+
+          <Text style={[styles.label, { marginTop: spacing.md }]}>PREFERRED POSITION</Text>
+          <View style={styles.chipRow}>
+            {(['GK', 'DEF', 'MID', 'FWD', 'ANY'] as const).map((p) => (
+              <TouchableOpacity
+                key={p}
+                testID={`position-${p}-btn`}
+                onPress={() => setPosition(p)}
+                activeOpacity={0.85}
+                style={[styles.posChip, position === p && styles.posChipActive]}
+              >
+                <Text style={[styles.posChipText, position === p && styles.posChipTextActive]}>
+                  {p}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
 
           <TouchableOpacity
             testID="save-profile-btn"
@@ -470,4 +490,27 @@ const styles = StyleSheet.create({
     letterSpacing: 1.2,
   },
   toggleTextOn: { color: '#fff' },
+  chipRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
+  posChip: {
+    paddingHorizontal: spacing.md,
+    height: 38,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.background,
+    minWidth: 54,
+  },
+  posChipActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  posChipText: {
+    color: colors.textSecondary,
+    fontWeight: '900',
+    letterSpacing: 1,
+    fontSize: 13,
+  },
+  posChipTextActive: { color: '#fff' },
 });

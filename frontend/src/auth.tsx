@@ -7,11 +7,16 @@ export type User = {
   name: string;
   profile_picture: string | null;
   shirt_number: number | null;
+  preferred_position: 'GK' | 'DEF' | 'MID' | 'FWD' | 'ANY' | null;
   role: 'admin' | 'user';
   can_edit_matches: boolean;
   goals: number;
   assists: number;
   matches_played: number;
+  wins: number;
+  draws: number;
+  losses: number;
+  league_points: number;
   rating: number;
 };
 

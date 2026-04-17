@@ -1,0 +1,114 @@
+{
+  "summary": "Backend testing complete - All 41 tests passed (24 existing + 17 new league features). Comprehensive testing of new user fields (preferred_position, wins, draws, losses, league_points), match types (friendly/league), 3-team matches, league points system, and all CRUD operations.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_auth.py",
+    "/app/backend/tests/test_users.py",
+    "/app/backend/tests/test_config.py",
+    "/app/backend/tests/test_matches.py",
+    "/app/backend/tests/test_league_features.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/pytest_results.xml",
+    "/app/test_reports/pytest/pytest_results_league.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "✅ All new user fields (preferred_position, wins, draws, losses, league_points) properly initialized to 0/None on registration",
+    "✅ preferred_position validation working correctly (GK/DEF/MID/FWD/ANY)",
+    "✅ match_type defaults to 'friendly', third_team_enabled defaults to false",
+    "✅ League points formula correct: win=3, draw=1, loss=0",
+    "✅ League points ONLY awarded for 2-team league matches (third_team_enabled=false)",
+    "✅ 3-team matches do NOT award league points (even if match_type='league')",
+    "✅ Lineup generation with third_team_enabled=true correctly distributes players across 3 teams using snake draft",
+    "✅ Lineup generation with third_team_enabled=false produces empty team_c array",
+    "✅ Result recording accepts team_c_score when third_team_enabled=true",
+    "✅ matches_played incremented for all participants in 3-team matches",
+    "✅ Editing league match result correctly reverts prior league points before applying new",
+    "✅ Deleting league match correctly reverts league points for all participants",
+    "✅ All MongoDB _id properly excluded from responses",
+    "✅ All existing tests still pass (no regressions)"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_league_features.py"
+  ],
+  "success_rate": {
+    "backend": "100% (41/41 tests passed)",
+    "frontend": "N/A (backend-only testing)"
+  },
+  "seed_data_creation": "Tests create unique users per test run using timestamp-based email addresses (TEST_*_{timestamp}@clubdodo.com). Admin user (admin@clubdodo.com / dodo2026) is seeded on startup.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All backend endpoints tested and working correctly. New features verified: preferred_position field (GK/DEF/MID/FWD/ANY), league points system (win=3, draw=1, loss=0), 3-team matches with team_c, match_type (friendly/league). League points ONLY awarded for 2-team league matches. 3-team matches increment matches_played but do NOT award league points. Result editing and match deletion correctly revert league points. All existing functionality still working (no regressions).",
+  "tests_executed": {
+    "auth": [
+      "POST /api/auth/register - creates user, returns {token, user}",
+      "POST /api/auth/register - accepts preferred_position (GK/DEF/MID/FWD/ANY) and persists it",
+      "POST /api/auth/register - without preferred_position defaults to None",
+      "POST /api/auth/login - admin login returns admin role",
+      "POST /api/auth/login - invalid credentials returns 401",
+      "GET /api/auth/me - with Bearer token returns user with new fields (preferred_position, wins, draws, losses, league_points)",
+      "GET /api/auth/me - without token returns 401",
+      "GET /api/auth/me - with invalid token returns 401"
+    ],
+    "users": [
+      "GET /api/users - lists users sorted by rating desc",
+      "PUT /api/users/me - updates name, shirt_number, profile_picture, preferred_position",
+      "POST /api/users/grant-edit - admin toggles can_edit_matches",
+      "POST /api/users/grant-edit - non-admin returns 403"
+    ],
+    "config": [
+      "GET /api/config - public, no auth required",
+      "PUT /api/config - admin only, updates club_name and club_logo",
+      "PUT /api/config - non-admin returns 403"
+    ],
+    "matches": [
+      "POST /api/matches - any authenticated user can create",
+      "POST /api/matches - accepts match_type ('friendly'|'league') and third_team_enabled (bool)",
+      "POST /api/matches - defaults to match_type='friendly' and third_team_enabled=false",
+      "GET /api/matches - lists all matches",
+      "GET /api/matches/{id} - returns match with votes array and new fields (match_type, third_team_enabled)",
+      "POST /api/matches/{id}/vote - stores vote, overwrites previous",
+      "POST /api/matches/{id}/generate-lineup - editor only, snake draft by rating",
+      "POST /api/matches/{id}/generate-lineup - with third_team_enabled=true produces team_a, team_b, team_c",
+      "POST /api/matches/{id}/generate-lineup - with third_team_enabled=false produces empty team_c array",
+      "POST /api/matches/{id}/generate-lineup - non-editor returns 403",
+      "POST /api/matches/{id}/result - editor only, updates stats and rating",
+      "POST /api/matches/{id}/result - with match_type='league' awards league points (winner +3, loser 0, draw +1 each)",
+      "POST /api/matches/{id}/result - with match_type='friendly' does NOT award league points",
+      "POST /api/matches/{id}/result - accepts team_c_score when third_team_enabled=true",
+      "POST /api/matches/{id}/result - 3-team match increments matches_played for all 3 teams",
+      "POST /api/matches/{id}/result - 3-team match does NOT award league points (even if match_type='league')",
+      "POST /api/matches/{id}/result - editing reverts prior stats and league points",
+      "POST /api/matches/{id}/result - non-editor returns 403",
+      "DELETE /api/matches/{id} - editor only, reverts stats and league points",
+      "DELETE /api/matches/{id} - non-editor returns 403"
+    ]
+  },
+  "verified_requirements": [
+    "✅ POST /api/auth/register accepts preferred_position (GK/DEF/MID/FWD/ANY) and persists it",
+    "✅ GET /api/auth/me returns new fields: preferred_position, wins, draws, losses, league_points",
+    "✅ PUT /api/users/me updates preferred_position",
+    "✅ POST /api/matches accepts match_type ('friendly'|'league') and third_team_enabled (bool), defaults to 'friendly'/false",
+    "✅ GET /api/matches/{id} returns match_type and third_team_enabled",
+    "✅ POST /api/matches/{id}/generate-lineup produces lineup with team_a, team_b AND team_c when third_team_enabled=true",
+    "✅ POST /api/matches/{id}/generate-lineup produces empty team_c array when third_team_enabled=false",
+    "✅ POST /api/matches/{id}/generate-lineup snake draft distributes yes voters by rating across all active teams",
+    "✅ POST /api/matches/{id}/result with match_type='league' (2 teams) awards league points: winner +3 league_points +1 win; losers +1 loss; draws +1 each and +1 draw",
+    "✅ POST /api/matches/{id}/result with match_type='friendly' does NOT award league points",
+    "✅ Editing a league match result reverts prior league points before applying new outcome",
+    "✅ DELETE /api/matches/{id} on played league match reverts league points for all participants",
+    "✅ POST /api/matches/{id}/result accepts team_c_score when third_team_enabled=true",
+    "✅ 3-team match: matches_played is incremented for team_a + team_b + team_c participants",
+    "✅ 3-team match does NOT award league points (even if match_type='league')",
+    "✅ All existing tests still pass (auth, users, config, vote, non-editor 403 for generate-lineup/result/delete)"
+  ]
+}

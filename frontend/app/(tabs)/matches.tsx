@@ -12,11 +12,13 @@ import {
   KeyboardAvoidingView,
   Platform,
   Alert,
+  ScrollView,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { api } from '../../src/api';
+import { useAuth } from '../../src/auth';
 import { colors, spacing, radii } from '../../src/theme';
 import { Display, Overline, Muted, Title } from '../../src/typography';
 
@@ -26,6 +28,8 @@ type Match = {
   date: string;
   location?: string | null;
   team_size: number;
+  match_type: 'friendly' | 'league';
+  third_team_enabled: boolean;
   status: 'voting' | 'scheduled' | 'played';
   votes: any[];
   result?: any;
@@ -57,8 +61,15 @@ function StatusPill({ status }: { status: Match['status'] }) {
   );
 }
 
+function todayPlusDays(d: number): Date {
+  const out = new Date();
+  out.setDate(out.getDate() + d);
+  return out;
+}
+
 export default function MatchesScreen() {
   const router = useRouter();
+  const { user } = useAuth();
   const [matches, setMatches] = useState<Match[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -69,8 +80,13 @@ export default function MatchesScreen() {
   const [title, setTitle] = useState('');
   const [location, setLocation] = useState('');
   const [teamSize, setTeamSize] = useState('5');
-  const [whenDays, setWhenDays] = useState(3);
-  const [whenHour, setWhenHour] = useState(19);
+  const [matchType, setMatchType] = useState<'friendly' | 'league'>('friendly');
+  const [thirdTeam, setThirdTeam] = useState(false);
+  const [dateOffset, setDateOffset] = useState(3); // days
+  const [hour, setHour] = useState('19');
+  const [minute, setMinute] = useState('00');
+
+  const canEdit = !!user && (user.role === 'admin' || user.can_edit_matches);
 
   const load = useCallback(async () => {
     try {
@@ -94,8 +110,11 @@ export default function MatchesScreen() {
     setTitle('');
     setLocation('');
     setTeamSize('5');
-    setWhenDays(3);
-    setWhenHour(19);
+    setMatchType('friendly');
+    setThirdTeam(false);
+    setDateOffset(3);
+    setHour('19');
+    setMinute('00');
   };
 
   const createMatch = async () => {
@@ -108,11 +127,24 @@ export default function MatchesScreen() {
       Alert.alert('Invalid team size', 'Choose between 3 and 11.');
       return;
     }
+    const h = parseInt(hour, 10);
+    const mn = parseInt(minute, 10);
+    if (!Number.isFinite(h) || h < 0 || h > 23) {
+      Alert.alert('Invalid hour', 'Hour must be 0-23.');
+      return;
+    }
+    if (!Number.isFinite(mn) || mn < 0 || mn > 59) {
+      Alert.alert('Invalid minutes', 'Minutes must be 0-59.');
+      return;
+    }
+    if (matchType === 'league' && thirdTeam) {
+      Alert.alert('Invalid combo', 'Third team is only available for friendly matches.');
+      return;
+    }
     setSaving(true);
     try {
-      const d = new Date();
-      d.setDate(d.getDate() + whenDays);
-      d.setHours(whenHour, 0, 0, 0);
+      const d = todayPlusDays(dateOffset);
+      d.setHours(h, mn, 0, 0);
       await api('/matches', {
         method: 'POST',
         body: {
@@ -120,6 +152,8 @@ export default function MatchesScreen() {
           location: location.trim() || null,
           date: d.toISOString(),
           team_size: ts,
+          match_type: matchType,
+          third_team_enabled: thirdTeam,
         },
       });
       resetForm();
@@ -130,6 +164,28 @@ export default function MatchesScreen() {
     } finally {
       setSaving(false);
     }
+  };
+
+  const deleteMatch = (mid: string, title: string) => {
+    Alert.alert(
+      `Delete "${title}"?`,
+      'This reverts any stats recorded from this match.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await api(`/matches/${mid}`, { method: 'DELETE' });
+              await load();
+            } catch (e: any) {
+              Alert.alert('Error', e.message || 'Failed');
+            }
+          },
+        },
+      ]
+    );
   };
 
   if (loading) {
@@ -173,36 +229,61 @@ export default function MatchesScreen() {
           />
         }
         renderItem={({ item }) => (
-          <TouchableOpacity
-            testID={`match-card-${item.id}`}
-            activeOpacity={0.85}
-            onPress={() => router.push(`/match/${item.id}`)}
-            style={styles.card}
-          >
-            <View style={styles.cardTop}>
-              <Title style={{ fontSize: 18, flex: 1 }} numberOfLines={1}>
-                {item.title}
-              </Title>
-              <StatusPill status={item.status} />
-            </View>
-            <Muted style={{ marginTop: 6 }}>
-              {formatDate(item.date)}
-              {item.location ? ` · ${item.location}` : ''}
-            </Muted>
-            <View style={styles.cardFooter}>
-              <Text style={styles.cardMeta}>
-                {item.team_size}v{item.team_size} ·{' '}
-                {item.votes.filter((v: any) => v.vote === 'yes').length} IN /{' '}
-                {item.votes.filter((v: any) => v.vote === 'reserve').length} RES /{' '}
-                {item.votes.filter((v: any) => v.vote === 'no').length} OUT
-              </Text>
-              {item.result && (
-                <Text style={styles.scoreText}>
-                  {item.result.team_a_score} – {item.result.team_b_score}
-                </Text>
-              )}
-            </View>
-          </TouchableOpacity>
+          <View style={styles.cardWrap}>
+            <TouchableOpacity
+              testID={`match-card-${item.id}`}
+              activeOpacity={0.85}
+              onPress={() => router.push(`/match/${item.id}`)}
+              style={styles.card}
+            >
+              <View style={styles.cardTop}>
+                <Title style={{ fontSize: 18, flex: 1 }} numberOfLines={1}>
+                  {item.title}
+                </Title>
+                <StatusPill status={item.status} />
+              </View>
+              <Muted style={{ marginTop: 6 }}>
+                {formatDate(item.date)}
+                {item.location ? ` · ${item.location}` : ''}
+              </Muted>
+              <View style={styles.cardFooter}>
+                <View style={{ flexDirection: 'row', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <View style={styles.tag}>
+                    <Text style={styles.tagText}>
+                      {item.team_size}v{item.team_size}
+                      {item.third_team_enabled ? 'v' + item.team_size : ''}
+                    </Text>
+                  </View>
+                  {item.match_type === 'league' && (
+                    <View style={[styles.tag, { borderColor: colors.primary }]}>
+                      <Text style={[styles.tagText, { color: colors.primary }]}>LEAGUE</Text>
+                    </View>
+                  )}
+                  <Text style={styles.cardMeta}>
+                    {item.votes.filter((v: any) => v.vote === 'yes').length}✓ /{' '}
+                    {item.votes.filter((v: any) => v.vote === 'reserve').length}⟳ /{' '}
+                    {item.votes.filter((v: any) => v.vote === 'no').length}✗
+                  </Text>
+                </View>
+                {item.result && (
+                  <Text style={styles.scoreText}>
+                    {item.result.team_a_score} – {item.result.team_b_score}
+                    {item.result.team_c_score != null ? ` – ${item.result.team_c_score}` : ''}
+                  </Text>
+                )}
+              </View>
+            </TouchableOpacity>
+            {canEdit && (
+              <TouchableOpacity
+                testID={`match-delete-${item.id}`}
+                onPress={() => deleteMatch(item.id, item.title)}
+                style={styles.delBtn}
+                hitSlop={8}
+              >
+                <Ionicons name="trash-outline" size={16} color={colors.danger} />
+              </TouchableOpacity>
+            )}
+          </View>
         )}
         ListEmptyComponent={
           <Muted style={{ textAlign: 'center', marginTop: 40 }}>
@@ -222,119 +303,226 @@ export default function MatchesScreen() {
           style={styles.modalBg}
         >
           <View style={styles.modalCard}>
-            <View style={styles.modalHeader}>
-              <Title style={{ fontSize: 20 }}>New Match</Title>
-              <TouchableOpacity
-                testID="close-create-match-modal"
-                onPress={() => setModalOpen(false)}
-                hitSlop={12}
-              >
-                <Ionicons name="close" size={24} color={colors.textSecondary} />
-              </TouchableOpacity>
-            </View>
-
-            <Text style={styles.label}>TITLE</Text>
-            <TextInput
-              testID="create-match-title-input"
-              value={title}
-              onChangeText={setTitle}
-              placeholder="Friday night 5-a-side"
-              placeholderTextColor={colors.textMuted}
-              style={styles.input}
-            />
-
-            <Text style={[styles.label, { marginTop: spacing.md }]}>LOCATION (optional)</Text>
-            <TextInput
-              testID="create-match-location-input"
-              value={location}
-              onChangeText={setLocation}
-              placeholder="PowerLeague Shoreditch"
-              placeholderTextColor={colors.textMuted}
-              style={styles.input}
-            />
-
-            <Text style={[styles.label, { marginTop: spacing.md }]}>TEAM SIZE</Text>
-            <View style={styles.row}>
-              {[3, 5, 7, 11].map((n) => (
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <View style={styles.modalHeader}>
+                <Title style={{ fontSize: 20 }}>New Match</Title>
                 <TouchableOpacity
-                  key={n}
-                  testID={`team-size-${n}-btn`}
-                  onPress={() => setTeamSize(String(n))}
-                  style={[
-                    styles.choice,
-                    parseInt(teamSize, 10) === n && styles.choiceActive,
-                  ]}
-                  activeOpacity={0.8}
+                  testID="close-create-match-modal"
+                  onPress={() => setModalOpen(false)}
+                  hitSlop={12}
                 >
-                  <Text
-                    style={[
-                      styles.choiceText,
-                      parseInt(teamSize, 10) === n && styles.choiceTextActive,
-                    ]}
-                  >
-                    {n}v{n}
-                  </Text>
+                  <Ionicons name="close" size={24} color={colors.textSecondary} />
                 </TouchableOpacity>
-              ))}
-            </View>
+              </View>
 
-            <Text style={[styles.label, { marginTop: spacing.md }]}>WHEN (DAYS FROM NOW)</Text>
-            <View style={styles.row}>
-              {[1, 3, 7, 14].map((n) => (
-                <TouchableOpacity
-                  key={n}
-                  testID={`when-days-${n}-btn`}
-                  onPress={() => setWhenDays(n)}
-                  style={[styles.choice, whenDays === n && styles.choiceActive]}
-                  activeOpacity={0.8}
-                >
-                  <Text
-                    style={[
-                      styles.choiceText,
-                      whenDays === n && styles.choiceTextActive,
-                    ]}
+              <Text style={styles.label}>TITLE</Text>
+              <TextInput
+                testID="create-match-title-input"
+                value={title}
+                onChangeText={setTitle}
+                placeholder="Friday night 5-a-side"
+                placeholderTextColor={colors.textMuted}
+                style={styles.input}
+              />
+
+              <Text style={[styles.label, { marginTop: spacing.md }]}>LOCATION (optional)</Text>
+              <TextInput
+                testID="create-match-location-input"
+                value={location}
+                onChangeText={setLocation}
+                placeholder="PowerLeague Shoreditch"
+                placeholderTextColor={colors.textMuted}
+                style={styles.input}
+              />
+
+              <Text style={[styles.label, { marginTop: spacing.md }]}>MATCH TYPE</Text>
+              <View style={styles.row}>
+                {(['friendly', 'league'] as const).map((t) => (
+                  <TouchableOpacity
+                    key={t}
+                    testID={`match-type-${t}-btn`}
+                    onPress={() => {
+                      setMatchType(t);
+                      if (t === 'league') setThirdTeam(false);
+                    }}
+                    style={[styles.choice, matchType === t && styles.choiceActive]}
+                    activeOpacity={0.8}
                   >
-                    {n}d
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
+                    <Text
+                      style={[
+                        styles.choiceText,
+                        matchType === t && styles.choiceTextActive,
+                      ]}
+                    >
+                      {t.toUpperCase()}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              <Muted style={{ fontSize: 11, marginTop: 4 }}>
+                {matchType === 'league'
+                  ? 'Win = 3 pts · Draw = 1 pt · Loss = 0 pts'
+                  : 'Casual friendly — no league points awarded'}
+              </Muted>
 
-            <Text style={[styles.label, { marginTop: spacing.md }]}>KICK-OFF HOUR</Text>
-            <View style={styles.row}>
-              {[17, 18, 19, 20, 21].map((h) => (
-                <TouchableOpacity
-                  key={h}
-                  testID={`hour-${h}-btn`}
-                  onPress={() => setWhenHour(h)}
-                  style={[styles.choice, whenHour === h && styles.choiceActive]}
-                  activeOpacity={0.8}
-                >
-                  <Text
+              <Text style={[styles.label, { marginTop: spacing.md }]}>TEAM SIZE</Text>
+              <View style={styles.row}>
+                {[3, 5, 6, 7, 8, 9, 11].map((n) => (
+                  <TouchableOpacity
+                    key={n}
+                    testID={`team-size-${n}-btn`}
+                    onPress={() => setTeamSize(String(n))}
                     style={[
-                      styles.choiceText,
-                      whenHour === h && styles.choiceTextActive,
+                      styles.choice,
+                      parseInt(teamSize, 10) === n && styles.choiceActive,
                     ]}
+                    activeOpacity={0.8}
                   >
-                    {h}:00
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
+                    <Text
+                      style={[
+                        styles.choiceText,
+                        parseInt(teamSize, 10) === n && styles.choiceTextActive,
+                      ]}
+                    >
+                      {n}v{n}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
 
-            <TouchableOpacity
-              testID="submit-create-match-btn"
-              disabled={saving}
-              onPress={createMatch}
-              style={[styles.primaryBtn, saving && { opacity: 0.6 }]}
-              activeOpacity={0.85}
-            >
-              {saving ? (
-                <ActivityIndicator color="#fff" />
-              ) : (
-                <Text style={styles.primaryBtnText}>CREATE MATCH</Text>
+              {matchType === 'friendly' && (
+                <>
+                  <Text style={[styles.label, { marginTop: spacing.md }]}>
+                    THIRD TEAM (WHITE)
+                  </Text>
+                  <View style={styles.row}>
+                    {[
+                      { v: false, label: '2 TEAMS' },
+                      { v: true, label: '3 TEAMS' },
+                    ].map((opt) => (
+                      <TouchableOpacity
+                        key={opt.label}
+                        testID={`third-team-${opt.v}-btn`}
+                        onPress={() => setThirdTeam(opt.v)}
+                        style={[styles.choice, thirdTeam === opt.v && styles.choiceActive]}
+                        activeOpacity={0.8}
+                      >
+                        <Text
+                          style={[
+                            styles.choiceText,
+                            thirdTeam === opt.v && styles.choiceTextActive,
+                          ]}
+                        >
+                          {opt.label}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </>
               )}
-            </TouchableOpacity>
+
+              <Text style={[styles.label, { marginTop: spacing.md }]}>DATE</Text>
+              <View style={styles.row}>
+                {[0, 1, 2, 3, 5, 7, 14].map((n) => {
+                  const d = todayPlusDays(n);
+                  const short = n === 0 ? 'Today' : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+                  return (
+                    <TouchableOpacity
+                      key={n}
+                      testID={`date-offset-${n}-btn`}
+                      onPress={() => setDateOffset(n)}
+                      style={[styles.choice, dateOffset === n && styles.choiceActive]}
+                      activeOpacity={0.8}
+                    >
+                      <Text
+                        style={[
+                          styles.choiceText,
+                          dateOffset === n && styles.choiceTextActive,
+                        ]}
+                      >
+                        {short}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              <Text style={[styles.label, { marginTop: spacing.md }]}>EXACT KICK-OFF</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                <TextInput
+                  testID="kickoff-hour-input"
+                  value={hour}
+                  onChangeText={(t) => setHour(t.replace(/[^0-9]/g, '').slice(0, 2))}
+                  keyboardType="number-pad"
+                  placeholder="HH"
+                  placeholderTextColor={colors.textMuted}
+                  style={[styles.input, styles.timeInput]}
+                />
+                <Text style={styles.timeSep}>:</Text>
+                <TextInput
+                  testID="kickoff-minute-input"
+                  value={minute}
+                  onChangeText={(t) => setMinute(t.replace(/[^0-9]/g, '').slice(0, 2))}
+                  keyboardType="number-pad"
+                  placeholder="MM"
+                  placeholderTextColor={colors.textMuted}
+                  style={[styles.input, styles.timeInput]}
+                />
+                <View style={{ flex: 1 }}>
+                  <Muted style={{ fontSize: 11 }}>
+                    {(() => {
+                      const d = todayPlusDays(dateOffset);
+                      const h = parseInt(hour || '0', 10);
+                      const m = parseInt(minute || '0', 10);
+                      if (!Number.isFinite(h) || !Number.isFinite(m)) return '';
+                      d.setHours(h, m, 0, 0);
+                      return d.toLocaleString(undefined, {
+                        weekday: 'short',
+                        month: 'short',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      });
+                    })()}
+                  </Muted>
+                </View>
+              </View>
+
+              <View style={styles.row}>
+                {['15', '30', '45', '00'].map((m) => (
+                  <TouchableOpacity
+                    key={m}
+                    testID={`quick-minute-${m}-btn`}
+                    onPress={() => setMinute(m)}
+                    style={[styles.choice, minute === m && styles.choiceActive]}
+                    activeOpacity={0.8}
+                  >
+                    <Text
+                      style={[
+                        styles.choiceText,
+                        minute === m && styles.choiceTextActive,
+                      ]}
+                    >
+                      :{m}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <TouchableOpacity
+                testID="submit-create-match-btn"
+                disabled={saving}
+                onPress={createMatch}
+                style={[styles.primaryBtn, saving && { opacity: 0.6 }]}
+                activeOpacity={0.85}
+              >
+                {saving ? (
+                  <ActivityIndicator color="#fff" />
+                ) : (
+                  <Text style={styles.primaryBtnText}>CREATE MATCH</Text>
+                )}
+              </TouchableOpacity>
+            </ScrollView>
           </View>
         </KeyboardAvoidingView>
       </Modal>
@@ -372,6 +560,7 @@ const styles = StyleSheet.create({
     paddingBottom: spacing.xxl,
     gap: spacing.sm,
   },
+  cardWrap: { position: 'relative' },
   card: {
     backgroundColor: colors.surface,
     borderWidth: 1,
@@ -389,17 +578,45 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
+    gap: 6,
+  },
+  tag: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    backgroundColor: colors.background,
+  },
+  tagText: {
+    color: colors.textSecondary,
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 1,
   },
   cardMeta: {
     color: colors.textSecondary,
     fontSize: 11,
     fontWeight: '800',
-    letterSpacing: 0.8,
+    letterSpacing: 0.5,
   },
   scoreText: {
     color: colors.textPrimary,
     fontWeight: '900',
-    fontSize: 16,
+    fontSize: 15,
+  },
+  delBtn: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.background,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   statusPill: {
     borderWidth: 1,
@@ -424,6 +641,7 @@ const styles = StyleSheet.create({
     padding: spacing.lg,
     borderTopWidth: 1,
     borderColor: colors.border,
+    maxHeight: '90%',
   },
   modalHeader: {
     flexDirection: 'row',
@@ -448,7 +666,18 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     fontSize: 16,
   },
-  row: { flexDirection: 'row', gap: spacing.sm, flexWrap: 'wrap' },
+  timeInput: {
+    width: 64,
+    textAlign: 'center',
+    fontSize: 20,
+    fontWeight: '900',
+  },
+  timeSep: {
+    color: colors.textPrimary,
+    fontSize: 22,
+    fontWeight: '900',
+  },
+  row: { flexDirection: 'row', gap: spacing.sm, flexWrap: 'wrap', marginTop: 6 },
   choice: {
     paddingHorizontal: spacing.md,
     height: 40,

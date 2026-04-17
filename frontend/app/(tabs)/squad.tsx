@@ -20,18 +20,26 @@ type Player = {
   name: string;
   shirt_number: number | null;
   profile_picture: string | null;
+  preferred_position: string | null;
   goals: number;
   assists: number;
   matches_played: number;
+  wins: number;
+  draws: number;
+  losses: number;
+  league_points: number;
   rating: number;
   role: string;
   can_edit_matches: boolean;
 };
 
+type Tab = 'rating' | 'league';
+
 export default function SquadScreen() {
   const [players, setPlayers] = useState<Player[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [tab, setTab] = useState<Tab>('rating');
 
   const load = useCallback(async () => {
     try {
@@ -59,18 +67,52 @@ export default function SquadScreen() {
     );
   }
 
+  const sorted = [...players].sort((a, b) => {
+    if (tab === 'league') {
+      if (b.league_points !== a.league_points) return b.league_points - a.league_points;
+      return b.rating - a.rating;
+    }
+    return b.rating - a.rating;
+  });
+
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
       <View style={styles.header}>
         <Overline>Leaderboard</Overline>
         <Display style={{ fontSize: 32, lineHeight: 34 }}>The Squad</Display>
-        <Muted style={{ marginTop: 4 }}>
-          Ranked by form · Rating = Goals×3 + Assists×2 + Matches
-        </Muted>
       </View>
 
+      <View style={styles.tabsRow}>
+        <TouchableOpacity
+          testID="tab-rating"
+          onPress={() => setTab('rating')}
+          activeOpacity={0.85}
+          style={[styles.tab, tab === 'rating' && styles.tabActive]}
+        >
+          <Text style={[styles.tabText, tab === 'rating' && styles.tabTextActive]}>
+            FORM
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          testID="tab-league"
+          onPress={() => setTab('league')}
+          activeOpacity={0.85}
+          style={[styles.tab, tab === 'league' && styles.tabActive]}
+        >
+          <Text style={[styles.tabText, tab === 'league' && styles.tabTextActive]}>
+            LEAGUE
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      {tab === 'league' && (
+        <View style={styles.legend}>
+          <Text style={styles.legendText}>W · D · L · PTS</Text>
+        </View>
+      )}
+
       <FlatList
-        data={players}
+        data={sorted}
         keyExtractor={(p) => p.id}
         contentContainerStyle={styles.list}
         refreshControl={
@@ -93,19 +135,32 @@ export default function SquadScreen() {
               name={item.name}
             />
             <View style={{ flex: 1, marginLeft: spacing.md }}>
-              <Text style={styles.name} numberOfLines={1}>
-                {item.name}
-                {item.role === 'admin' && (
-                  <Text style={styles.adminTag}>  ADMIN</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Text style={styles.name} numberOfLines={1}>
+                  {item.name}
+                </Text>
+                {item.preferred_position && (
+                  <View style={styles.posBadge}>
+                    <Text style={styles.posBadgeText}>{item.preferred_position}</Text>
+                  </View>
                 )}
-              </Text>
+                {item.role === 'admin' && (
+                  <Text style={styles.adminTag}>ADMIN</Text>
+                )}
+              </View>
               <Text style={styles.meta}>
-                {item.goals}G · {item.assists}A · {item.matches_played} MP
+                {tab === 'rating'
+                  ? `${item.goals}G · ${item.assists}A · ${item.matches_played} MP`
+                  : `${item.wins}W · ${item.draws}D · ${item.losses}L`}
               </Text>
             </View>
             <View style={styles.ratingPill}>
-              <Text style={styles.ratingValue}>{item.rating}</Text>
-              <Text style={styles.ratingLabel}>RATING</Text>
+              <Text style={styles.ratingValue}>
+                {tab === 'rating' ? item.rating : item.league_points}
+              </Text>
+              <Text style={styles.ratingLabel}>
+                {tab === 'rating' ? 'RATING' : 'POINTS'}
+              </Text>
             </View>
           </View>
         )}
@@ -124,7 +179,45 @@ const styles = StyleSheet.create({
   header: {
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.md,
-    paddingBottom: spacing.md,
+    paddingBottom: spacing.sm,
+  },
+  tabsRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    marginBottom: spacing.sm,
+  },
+  tab: {
+    flex: 1,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+  },
+  tabActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  tabText: {
+    color: colors.textSecondary,
+    fontWeight: '900',
+    letterSpacing: 1.2,
+    fontSize: 12,
+  },
+  tabTextActive: { color: '#fff' },
+  legend: {
+    paddingHorizontal: spacing.lg,
+    marginBottom: 6,
+  },
+  legendText: {
+    color: colors.textMuted,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1.5,
+    textAlign: 'right',
   },
   list: {
     paddingHorizontal: spacing.lg,
@@ -150,6 +243,21 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     fontSize: 16,
     fontWeight: '800',
+    flexShrink: 1,
+  },
+  posBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    backgroundColor: colors.surfaceAccent,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+  },
+  posBadgeText: {
+    color: colors.textSecondary,
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 1,
   },
   meta: {
     color: colors.textSecondary,
@@ -161,12 +269,13 @@ const styles = StyleSheet.create({
   adminTag: {
     color: colors.primary,
     fontWeight: '900',
-    fontSize: 10,
+    fontSize: 9,
     letterSpacing: 1.2,
+    marginLeft: 4,
   },
   ratingPill: {
     alignItems: 'center',
-    minWidth: 60,
+    minWidth: 64,
     backgroundColor: colors.surfaceAccent,
     borderRadius: radii.sm,
     paddingVertical: 6,

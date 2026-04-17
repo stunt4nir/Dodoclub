@@ -68,11 +68,16 @@ def user_public(u: dict) -> dict:
         "name": u.get("name"),
         "profile_picture": u.get("profile_picture"),
         "shirt_number": u.get("shirt_number"),
+        "preferred_position": u.get("preferred_position"),
         "role": u.get("role", "user"),
         "can_edit_matches": u.get("can_edit_matches", False),
         "goals": u.get("goals", 0),
         "assists": u.get("assists", 0),
         "matches_played": u.get("matches_played", 0),
+        "wins": u.get("wins", 0),
+        "draws": u.get("draws", 0),
+        "losses": u.get("losses", 0),
+        "league_points": u.get("league_points", 0),
         "rating": compute_rating(
             u.get("goals", 0), u.get("assists", 0), u.get("matches_played", 0)
         ),
@@ -117,6 +122,7 @@ class RegisterIn(BaseModel):
     password: str = Field(min_length=6)
     name: str = Field(min_length=1, max_length=40)
     shirt_number: Optional[int] = Field(default=None, ge=1, le=99)
+    preferred_position: Optional[Literal["GK", "DEF", "MID", "FWD", "ANY"]] = None
 
 
 class LoginIn(BaseModel):
@@ -128,13 +134,16 @@ class ProfileUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=40)
     profile_picture: Optional[str] = None  # base64
     shirt_number: Optional[int] = Field(default=None, ge=1, le=99)
+    preferred_position: Optional[Literal["GK", "DEF", "MID", "FWD", "ANY"]] = None
 
 
 class MatchCreate(BaseModel):
     title: str = Field(min_length=1, max_length=80)
-    date: str  # ISO date "2026-03-01" or ISO datetime
+    date: str  # ISO datetime
     location: Optional[str] = Field(default=None, max_length=120)
     team_size: int = Field(default=5, ge=3, le=11)
+    match_type: Literal["friendly", "league"] = "friendly"
+    third_team_enabled: bool = False
 
 
 class VoteIn(BaseModel):
@@ -150,6 +159,7 @@ class PlayerStatLine(BaseModel):
 class MatchResultIn(BaseModel):
     team_a_score: int = Field(ge=0)
     team_b_score: int = Field(ge=0)
+    team_c_score: Optional[int] = Field(default=None, ge=0)
     stats: List[PlayerStatLine] = []
 
 
@@ -218,11 +228,16 @@ async def register(data: RegisterIn):
         "name": data.name,
         "profile_picture": None,
         "shirt_number": data.shirt_number,
+        "preferred_position": data.preferred_position,
         "role": "user",
         "can_edit_matches": False,
         "goals": 0,
         "assists": 0,
         "matches_played": 0,
+        "wins": 0,
+        "draws": 0,
+        "losses": 0,
+        "league_points": 0,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.users.insert_one(doc)
@@ -303,6 +318,7 @@ def _match_public(m: dict, users_by_id: dict) -> dict:
                     "name": u.get("name"),
                     "shirt_number": u.get("shirt_number"),
                     "profile_picture": u.get("profile_picture"),
+                    "preferred_position": u.get("preferred_position"),
                     "rating": compute_rating(
                         u.get("goals", 0),
                         u.get("assists", 0),
@@ -317,6 +333,8 @@ def _match_public(m: dict, users_by_id: dict) -> dict:
         "date": m["date"],
         "location": m.get("location"),
         "team_size": m.get("team_size", 5),
+        "match_type": m.get("match_type", "friendly"),
+        "third_team_enabled": m.get("third_team_enabled", False),
         "status": m.get("status", "voting"),
         "created_by": m.get("created_by"),
         "created_at": m.get("created_at"),
@@ -340,6 +358,8 @@ async def create_match(data: MatchCreate, user=Depends(get_current_user)):
         "date": data.date,
         "location": data.location,
         "team_size": data.team_size,
+        "match_type": data.match_type,
+        "third_team_enabled": data.third_team_enabled,
         "status": "voting",
         "created_by": user["id"],
         "created_at": datetime.now(timezone.utc).isoformat(),
@@ -381,32 +401,38 @@ async def vote_match(mid: str, data: VoteIn, user=Depends(get_current_user)):
     return _match_public(m, umap)
 
 
-def _build_lineup(vote_list: list, team_size: int) -> dict:
-    """Distribute 'yes' voters between Team A & Team B using snake draft by rating.
+def _build_lineup(vote_list: list, team_size: int, third_team_enabled: bool = False) -> dict:
+    """Distribute 'yes' voters between teams using snake draft by rating.
+    If third_team_enabled: split into 3 teams (A/B/C). Otherwise 2 teams (A/B).
     Overflow go to reserves. Users who voted 'reserve' also go to reserves."""
     yes_voters = [v for v in vote_list if v["vote"] == "yes"]
     reserve_voters = [v for v in vote_list if v["vote"] == "reserve"]
     # Sort by rating desc
     yes_voters.sort(key=lambda x: x.get("rating", 0), reverse=True)
 
-    team_a, team_b = [], []
-    on_pitch = yes_voters[: team_size * 2]
-    overflow = yes_voters[team_size * 2 :]
+    num_teams = 3 if third_team_enabled else 2
+    capacity = team_size * num_teams
+    on_pitch = yes_voters[:capacity]
+    overflow = yes_voters[capacity:]
 
-    # Snake draft
+    teams: List[List[dict]] = [[] for _ in range(num_teams)]
+    # Snake draft across num_teams
     for i, p in enumerate(on_pitch):
-        round_num = i // 2
-        if round_num % 2 == 0:
-            (team_a if i % 2 == 0 else team_b).append(p)
-        else:
-            (team_b if i % 2 == 0 else team_a).append(p)
+        round_num = i // num_teams
+        pos_in_round = i % num_teams
+        if round_num % 2 == 1:
+            pos_in_round = num_teams - 1 - pos_in_round
+        teams[pos_in_round].append(p)
 
-    return {
-        "team_a": team_a,
-        "team_b": team_b,
+    lineup = {
+        "team_a": teams[0],
+        "team_b": teams[1],
+        "team_c": teams[2] if num_teams == 3 else [],
         "reserves": overflow + reserve_voters,
         "team_size": team_size,
+        "third_team_enabled": third_team_enabled,
     }
+    return lineup
 
 
 @api.post("/matches/{mid}/generate-lineup")
@@ -416,12 +442,45 @@ async def generate_lineup(mid: str, user=Depends(require_editor)):
         raise HTTPException(404, "Match not found")
     umap = await _users_map()
     full = _match_public(m, umap)
-    lineup = _build_lineup(full["votes"], m.get("team_size", 5))
+    lineup = _build_lineup(
+        full["votes"], m.get("team_size", 5), m.get("third_team_enabled", False)
+    )
     await db.matches.update_one(
         {"id": mid}, {"$set": {"lineup": lineup, "status": "scheduled"}}
     )
     m = await db.matches.find_one({"id": mid}, {"_id": 0})
     return _match_public(m, umap)
+
+
+def _league_points_per_team(a: int, b: int) -> tuple:
+    """Return (team_a_points, team_b_points)."""
+    if a > b:
+        return 3, 0
+    if b > a:
+        return 0, 3
+    return 1, 1
+
+
+def _league_outcome(team_score: int, opponent_score: int) -> str:
+    if team_score > opponent_score:
+        return "win"
+    if team_score < opponent_score:
+        return "loss"
+    return "draw"
+
+
+async def _apply_league_delta(user_ids: List[str], outcome: str, sign: int):
+    """sign=+1 to apply, -1 to revert."""
+    if not user_ids:
+        return
+    points_map = {"win": 3, "draw": 1, "loss": 0}
+    field_map = {"win": "wins", "draw": "draws", "loss": "losses"}
+    inc = {
+        field_map[outcome]: 1 * sign,
+        "league_points": points_map[outcome] * sign,
+    }
+    for uid in user_ids:
+        await db.users.update_one({"id": uid}, {"$inc": inc})
 
 
 @api.post("/matches/{mid}/result")
@@ -434,11 +493,15 @@ async def record_result(mid: str, data: MatchResultIn, user=Depends(require_edit
     if not m.get("lineup"):
         umap = await _users_map()
         full = _match_public(m, umap)
-        lineup = _build_lineup(full["votes"], m.get("team_size", 5))
+        lineup = _build_lineup(
+            full["votes"],
+            m.get("team_size", 5),
+            m.get("third_team_enabled", False),
+        )
         await db.matches.update_one({"id": mid}, {"$set": {"lineup": lineup}})
         m["lineup"] = lineup
 
-    # If a prior result exists, revert previous stat contributions first
+    # If a prior result exists, revert previous contributions first
     prev = m.get("result")
     if prev:
         for s in prev.get("stats", []):
@@ -455,27 +518,53 @@ async def record_result(mid: str, data: MatchResultIn, user=Depends(require_edit
             await db.users.update_one(
                 {"id": uid}, {"$inc": {"matches_played": -1}}
             )
+        # revert league contributions if any
+        if prev.get("match_type") == "league":
+            for team_key, outcome in (prev.get("team_outcomes") or {}).items():
+                uids = prev.get("team_rosters", {}).get(team_key, [])
+                await _apply_league_delta(uids, outcome, sign=-1)
 
-    # Compute participants = everyone in team_a + team_b of lineup
+    # Compute team rosters from lineup
     lineup = m["lineup"]
-    participants = [p["user_id"] for p in lineup.get("team_a", [])] + [
-        p["user_id"] for p in lineup.get("team_b", [])
-    ]
+    team_a_uids = [p["user_id"] for p in lineup.get("team_a", [])]
+    team_b_uids = [p["user_id"] for p in lineup.get("team_b", [])]
+    team_c_uids = [p["user_id"] for p in lineup.get("team_c", []) or []]
+    participants = team_a_uids + team_b_uids + team_c_uids
 
-    # Apply new stats
+    # Apply matches_played
     for uid in participants:
         await db.users.update_one({"id": uid}, {"$inc": {"matches_played": 1}})
+    # Apply per-player goal/assist stats
     for s in data.stats:
         await db.users.update_one(
             {"id": s.user_id},
             {"$inc": {"goals": int(s.goals), "assists": int(s.assists)}},
         )
 
+    # League points (only for 2-team league matches)
+    team_outcomes = {}
+    team_rosters = {
+        "team_a": team_a_uids,
+        "team_b": team_b_uids,
+        "team_c": team_c_uids,
+    }
+    is_league = m.get("match_type") == "league" and not m.get("third_team_enabled", False)
+    if is_league:
+        out_a = _league_outcome(data.team_a_score, data.team_b_score)
+        out_b = _league_outcome(data.team_b_score, data.team_a_score)
+        team_outcomes = {"team_a": out_a, "team_b": out_b}
+        await _apply_league_delta(team_a_uids, out_a, sign=+1)
+        await _apply_league_delta(team_b_uids, out_b, sign=+1)
+
     result = {
         "team_a_score": data.team_a_score,
         "team_b_score": data.team_b_score,
+        "team_c_score": data.team_c_score,
         "stats": [s.dict() for s in data.stats],
         "participants": participants,
+        "team_rosters": team_rosters,
+        "team_outcomes": team_outcomes,
+        "match_type": m.get("match_type", "friendly"),
         "recorded_at": datetime.now(timezone.utc).isoformat(),
         "recorded_by": user["id"],
     }
@@ -509,6 +598,10 @@ async def delete_match(mid: str, user=Depends(require_editor)):
             await db.users.update_one(
                 {"id": uid}, {"$inc": {"matches_played": -1}}
             )
+        if prev.get("match_type") == "league":
+            for team_key, outcome in (prev.get("team_outcomes") or {}).items():
+                uids = prev.get("team_rosters", {}).get(team_key, [])
+                await _apply_league_delta(uids, outcome, sign=-1)
     await db.matches.delete_one({"id": mid})
     return {"ok": True}
 

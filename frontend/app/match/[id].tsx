@@ -21,11 +21,19 @@ import { colors, spacing, radii } from '../../src/theme';
 import { Display, Overline, Muted, Title } from '../../src/typography';
 import Avatar from '../../src/Avatar';
 
+// Team colours per requirement: Red, Black, optional White
+const TEAM_COLORS = {
+  a: { primary: '#DC2626', label: 'RED', text: '#fff' },      // Red
+  b: { primary: '#18181B', label: 'BLACK', text: '#fff' },    // Black
+  c: { primary: '#F5F5F4', label: 'WHITE', text: '#111' },    // White
+};
+
 type Vote = {
   user_id: string;
   name: string;
   shirt_number: number | null;
   profile_picture: string | null;
+  preferred_position?: string | null;
   rating: number;
   vote: 'yes' | 'no' | 'reserve';
 };
@@ -36,20 +44,27 @@ type Match = {
   date: string;
   location?: string | null;
   team_size: number;
+  match_type: 'friendly' | 'league';
+  third_team_enabled: boolean;
   status: 'voting' | 'scheduled' | 'played';
   created_by?: string;
   votes: Vote[];
   lineup?: {
     team_a: Vote[];
     team_b: Vote[];
+    team_c: Vote[];
     reserves: Vote[];
     team_size: number;
+    third_team_enabled?: boolean;
   } | null;
   result?: {
     team_a_score: number;
     team_b_score: number;
+    team_c_score?: number | null;
     stats: { user_id: string; goals: number; assists: number }[];
     participants: string[];
+    match_type?: string;
+    team_outcomes?: Record<string, 'win' | 'draw' | 'loss'>;
   } | null;
 };
 
@@ -66,9 +81,6 @@ function formatDate(d: string) {
 }
 
 function formationCoords(n: number): { x: number; y: number }[] {
-  // Returns coordinates in 0..1 where y=0 is top goal, y=1 is bottom goal (opponent)
-  // Team A occupies bottom half (y 0.5..1). Team B (flipped) occupies top half.
-  const coords: { x: number; y: number }[] = [];
   if (n === 3) {
     return [
       { x: 0.5, y: 0.94 },
@@ -78,11 +90,21 @@ function formationCoords(n: number): { x: number; y: number }[] {
   }
   if (n === 5) {
     return [
-      { x: 0.5, y: 0.94 }, // GK
+      { x: 0.5, y: 0.94 },
       { x: 0.22, y: 0.75 },
       { x: 0.78, y: 0.75 },
       { x: 0.33, y: 0.55 },
       { x: 0.67, y: 0.55 },
+    ];
+  }
+  if (n === 6) {
+    return [
+      { x: 0.5, y: 0.94 },
+      { x: 0.25, y: 0.8 },
+      { x: 0.75, y: 0.8 },
+      { x: 0.25, y: 0.6 },
+      { x: 0.75, y: 0.6 },
+      { x: 0.5, y: 0.5 },
     ];
   }
   if (n === 7) {
@@ -96,7 +118,6 @@ function formationCoords(n: number): { x: number; y: number }[] {
       { x: 0.5, y: 0.45 },
     ];
   }
-  // 11 a-side 4-4-2
   return [
     { x: 0.5, y: 0.95 },
     { x: 0.15, y: 0.82 },
@@ -117,22 +138,23 @@ function PlayerMarker({
   x,
   y,
   flip,
-  accent,
+  color,
+  textColor,
 }: {
   player?: Vote;
   x: number;
   y: number;
   flip?: boolean;
-  accent: string;
+  color: string;
+  textColor: string;
 }) {
   const ay = flip ? 1 - y : y;
   if (!player) {
     return (
       <View
         style={[
-          styles.marker,
           styles.markerEmpty,
-          { left: `${x * 100}%`, top: `${ay * 100}%`, borderColor: accent },
+          { left: `${x * 100}%`, top: `${ay * 100}%`, borderColor: color },
         ]}
       >
         <Text style={styles.markerEmptyText}>?</Text>
@@ -140,14 +162,9 @@ function PlayerMarker({
     );
   }
   return (
-    <View
-      style={[
-        styles.markerWrap,
-        { left: `${x * 100}%`, top: `${ay * 100}%` },
-      ]}
-    >
-      <View style={[styles.marker, { borderColor: accent }]}>
-        <Text style={styles.markerNumber}>
+    <View style={[styles.markerWrap, { left: `${x * 100}%`, top: `${ay * 100}%` }]}>
+      <View style={[styles.marker, { backgroundColor: color, borderColor: color }]}>
+        <Text style={[styles.markerNumber, { color: textColor }]}>
           {player.shirt_number ?? player.name.slice(0, 1).toUpperCase()}
         </Text>
       </View>
@@ -168,6 +185,7 @@ export default function MatchDetail() {
   const [resultOpen, setResultOpen] = useState(false);
   const [scoreA, setScoreA] = useState('0');
   const [scoreB, setScoreB] = useState('0');
+  const [scoreC, setScoreC] = useState('0');
   const [playerStats, setPlayerStats] = useState<Record<string, { goals: string; assists: string }>>({});
 
   const load = useCallback(async () => {
@@ -223,11 +241,11 @@ export default function MatchDetail() {
 
   const openResult = () => {
     if (!match) return;
-    // ensure lineup exists (auto generate if needed via backend will handle on submit)
     const existing = match.result;
     if (existing) {
       setScoreA(String(existing.team_a_score));
       setScoreB(String(existing.team_b_score));
+      setScoreC(existing.team_c_score != null ? String(existing.team_c_score) : '0');
       const map: Record<string, { goals: string; assists: string }> = {};
       for (const s of existing.stats) {
         map[s.user_id] = { goals: String(s.goals), assists: String(s.assists) };
@@ -236,6 +254,7 @@ export default function MatchDetail() {
     } else {
       setScoreA('0');
       setScoreB('0');
+      setScoreC('0');
       setPlayerStats({});
     }
     setResultOpen(true);
@@ -245,8 +264,13 @@ export default function MatchDetail() {
     if (!match) return;
     const sA = parseInt(scoreA, 10);
     const sB = parseInt(scoreB, 10);
+    const sC = match.third_team_enabled ? parseInt(scoreC, 10) : null;
     if (!Number.isFinite(sA) || !Number.isFinite(sB) || sA < 0 || sB < 0) {
-      Alert.alert('Invalid score', 'Scores must be numbers.');
+      Alert.alert('Invalid score', 'Scores must be non-negative numbers.');
+      return;
+    }
+    if (match.third_team_enabled && (!Number.isFinite(sC as number) || (sC as number) < 0)) {
+      Alert.alert('Invalid score', 'Team C score required.');
       return;
     }
     const stats = Object.entries(playerStats)
@@ -258,9 +282,11 @@ export default function MatchDetail() {
       .filter((s) => s.goals > 0 || s.assists > 0);
     setBusy(true);
     try {
+      const body: any = { team_a_score: sA, team_b_score: sB, stats };
+      if (sC != null) body.team_c_score = sC;
       const updated = await api<Match>(`/matches/${match.id}/result`, {
         method: 'POST',
-        body: { team_a_score: sA, team_b_score: sB, stats },
+        body,
       });
       setMatch(updated);
       setResultOpen(false);
@@ -307,9 +333,14 @@ export default function MatchDetail() {
   const resVoters = match.votes.filter((v) => v.vote === 'reserve');
   const noVoters = match.votes.filter((v) => v.vote === 'no');
   const coords = formationCoords(match.team_size);
+
+  const threeTeam = match.third_team_enabled;
+  const teamA = match.lineup?.team_a || [];
+  const teamB = match.lineup?.team_b || [];
+  const teamC = match.lineup?.team_c || [];
   const allPlayersForResult = match.lineup
-    ? [...(match.lineup.team_a || []), ...(match.lineup.team_b || [])]
-    : yesVoters.slice(0, match.team_size * 2);
+    ? [...teamA, ...teamB, ...teamC]
+    : yesVoters.slice(0, match.team_size * (threeTeam ? 3 : 2));
 
   return (
     <SafeAreaView style={styles.safe} edges={['top']}>
@@ -320,20 +351,22 @@ export default function MatchDetail() {
             testID="back-btn"
             onPress={() => router.back()}
             hitSlop={12}
-            style={styles.backBtn}
+            style={styles.iconBtn}
           >
             <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />
           </TouchableOpacity>
           <Overline>{match.status.toUpperCase()}</Overline>
-          {canEdit && (
+          {canEdit ? (
             <TouchableOpacity
               testID="delete-match-btn"
               onPress={deleteMatch}
               hitSlop={12}
-              style={styles.backBtn}
+              style={styles.iconBtn}
             >
               <Ionicons name="trash-outline" size={20} color={colors.danger} />
             </TouchableOpacity>
+          ) : (
+            <View style={{ width: 38 }} />
           )}
         </View>
 
@@ -344,12 +377,26 @@ export default function MatchDetail() {
         </Muted>
         <View style={styles.chipsRow}>
           <View style={styles.chip}>
-            <Text style={styles.chipText}>{match.team_size}v{match.team_size}</Text>
+            <Text style={styles.chipText}>
+              {match.team_size}v{match.team_size}{threeTeam ? 'v' + match.team_size : ''}
+            </Text>
           </View>
+          {match.match_type === 'league' ? (
+            <View style={[styles.chip, { borderColor: colors.primary }]}>
+              <Text style={[styles.chipText, { color: colors.primary }]}>LEAGUE · 3/1/0</Text>
+            </View>
+          ) : (
+            <View style={[styles.chip]}>
+              <Text style={styles.chipText}>FRIENDLY</Text>
+            </View>
+          )}
           {match.result && (
             <View style={[styles.chip, styles.scoreChip]}>
               <Text style={styles.scoreChipText}>
                 {match.result.team_a_score} – {match.result.team_b_score}
+                {match.result.team_c_score != null
+                  ? ` – ${match.result.team_c_score}`
+                  : ''}
               </Text>
             </View>
           )}
@@ -417,7 +464,6 @@ export default function MatchDetail() {
         </Overline>
 
         <View style={styles.pitch}>
-          {/* Pitch markings */}
           <View style={styles.midLine} />
           <View style={styles.midCircle} />
           <View style={[styles.box, styles.boxTop]} />
@@ -427,11 +473,12 @@ export default function MatchDetail() {
           {coords.map((c, i) => (
             <PlayerMarker
               key={`b-${i}`}
-              player={match.lineup?.team_b?.[i]}
+              player={teamB[i]}
               x={c.x}
               y={c.y}
               flip
-              accent="#60A5FA"
+              color={TEAM_COLORS.b.primary}
+              textColor={TEAM_COLORS.b.text}
             />
           ))}
 
@@ -439,22 +486,49 @@ export default function MatchDetail() {
           {coords.map((c, i) => (
             <PlayerMarker
               key={`a-${i}`}
-              player={match.lineup?.team_a?.[i]}
+              player={teamA[i]}
               x={c.x}
               y={c.y}
-              accent={colors.primary}
+              color={TEAM_COLORS.a.primary}
+              textColor={TEAM_COLORS.a.text}
             />
           ))}
         </View>
 
         <View style={styles.lineupMeta}>
           <Text style={styles.teamLabel}>
-            <Text style={{ color: colors.primary }}>■ </Text>TEAM DODO
+            <Text style={{ color: TEAM_COLORS.a.primary }}>■ </Text>
+            TEAM RED ({teamA.length})
           </Text>
           <Text style={styles.teamLabel}>
-            <Text style={{ color: '#60A5FA' }}>■ </Text>TEAM ORANGE
+            <Text style={{ color: '#71717A' }}>■ </Text>
+            TEAM BLACK ({teamB.length})
           </Text>
         </View>
+
+        {threeTeam && (
+          <View style={styles.thirdTeamCard}>
+            <View style={styles.thirdTeamHeader}>
+              <View style={styles.thirdTeamDot} />
+              <Text style={styles.teamLabel}>TEAM WHITE ({teamC.length})</Text>
+              <Muted style={{ marginLeft: 'auto', fontSize: 11 }}>Rotates in</Muted>
+            </View>
+            {teamC.length === 0 ? (
+              <Muted style={{ fontSize: 12 }}>—</Muted>
+            ) : (
+              <View style={styles.thirdTeamList}>
+                {teamC.map((p) => (
+                  <View key={p.user_id} style={styles.thirdTeamPlayer}>
+                    <Text style={styles.thirdTeamNumber}>{p.shirt_number ?? '·'}</Text>
+                    <Text style={styles.thirdTeamName} numberOfLines={1}>
+                      {p.name}
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            )}
+          </View>
+        )}
 
         {canEdit && match.status === 'voting' && (
           <TouchableOpacity
@@ -495,7 +569,16 @@ export default function MatchDetail() {
                     name={v.name}
                     shirt={v.shirt_number || undefined}
                   />
-                  <Text style={styles.voterName}>{v.name}</Text>
+                  <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                    <Text style={styles.voterName} numberOfLines={1}>
+                      {v.name}
+                    </Text>
+                    {v.preferred_position && (
+                      <View style={styles.posBadge}>
+                        <Text style={styles.posBadgeText}>{v.preferred_position}</Text>
+                      </View>
+                    )}
+                  </View>
                   <Text style={styles.voterRating}>{v.rating}</Text>
                 </View>
               ))
@@ -542,10 +625,10 @@ export default function MatchDetail() {
                 </TouchableOpacity>
               </View>
 
-              <Text style={styles.label}>SCORE</Text>
+              <Text style={styles.label}>SCORES</Text>
               <View style={{ flexDirection: 'row', gap: spacing.sm, alignItems: 'center' }}>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.teamSmall}>DODO</Text>
+                  <Text style={[styles.teamSmall, { color: TEAM_COLORS.a.primary }]}>RED</Text>
                   <TextInput
                     testID="score-team-a-input"
                     value={scoreA}
@@ -556,7 +639,7 @@ export default function MatchDetail() {
                 </View>
                 <Text style={styles.vs}>VS</Text>
                 <View style={{ flex: 1 }}>
-                  <Text style={styles.teamSmall}>ORANGE</Text>
+                  <Text style={[styles.teamSmall, { color: colors.textPrimary }]}>BLACK</Text>
                   <TextInput
                     testID="score-team-b-input"
                     value={scoreB}
@@ -565,7 +648,28 @@ export default function MatchDetail() {
                     style={[styles.input, styles.scoreInput]}
                   />
                 </View>
+                {threeTeam && (
+                  <>
+                    <Text style={styles.vs}>VS</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[styles.teamSmall, { color: '#fff' }]}>WHITE</Text>
+                      <TextInput
+                        testID="score-team-c-input"
+                        value={scoreC}
+                        onChangeText={(t) => setScoreC(t.replace(/[^0-9]/g, ''))}
+                        keyboardType="number-pad"
+                        style={[styles.input, styles.scoreInput]}
+                      />
+                    </View>
+                  </>
+                )}
               </View>
+
+              {match.match_type === 'league' && !threeTeam && (
+                <Muted style={{ fontSize: 11, marginTop: 4 }}>
+                  League points: winner +3, draw +1, loser +0
+                </Muted>
+              )}
 
               <Text style={[styles.label, { marginTop: spacing.md }]}>
                 Player stats (goals / assists)
@@ -658,7 +762,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     marginBottom: spacing.sm,
   },
-  backBtn: {
+  iconBtn: {
     width: 38,
     height: 38,
     alignItems: 'center',
@@ -668,7 +772,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
   },
-  chipsRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm },
+  chipsRow: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.sm, flexWrap: 'wrap' },
   chip: {
     backgroundColor: colors.surfaceAccent,
     paddingHorizontal: spacing.md,
@@ -749,7 +853,6 @@ const styles = StyleSheet.create({
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: colors.surface,
     borderWidth: 3,
     alignItems: 'center',
     justifyContent: 'center',
@@ -763,6 +866,9 @@ const styles = StyleSheet.create({
     marginTop: -16,
     borderStyle: 'dashed',
     backgroundColor: 'rgba(255,255,255,0.07)',
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   markerEmptyText: {
     color: 'rgba(255,255,255,0.6)',
@@ -770,7 +876,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   markerNumber: {
-    color: colors.textPrimary,
     fontWeight: '900',
     fontSize: 15,
   },
@@ -780,9 +885,6 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '800',
     textAlign: 'center',
-    textShadowColor: 'rgba(0,0,0,0.8)',
-    textShadowRadius: 2,
-    textShadowOffset: { width: 0, height: 1 },
   },
   lineupMeta: {
     flexDirection: 'row',
@@ -794,6 +896,47 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '900',
     letterSpacing: 1.2,
+  },
+  thirdTeamCard: {
+    marginTop: spacing.md,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    borderRadius: radii.md,
+    padding: spacing.md,
+  },
+  thirdTeamHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 6,
+  },
+  thirdTeamDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: TEAM_COLORS.c.primary,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+  },
+  thirdTeamList: { gap: 4 },
+  thirdTeamPlayer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  thirdTeamNumber: {
+    width: 22,
+    color: TEAM_COLORS.c.primary,
+    fontWeight: '900',
+    fontSize: 12,
+    textAlign: 'center',
+  },
+  thirdTeamName: {
+    color: colors.textPrimary,
+    fontWeight: '700',
+    fontSize: 13,
+    flex: 1,
   },
   group: { marginBottom: spacing.md },
   groupLabel: {
@@ -814,9 +957,23 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
   voterName: {
-    flex: 1,
     color: colors.textPrimary,
     fontWeight: '700',
+    flexShrink: 1,
+  },
+  posBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: 4,
+    backgroundColor: colors.surfaceAccent,
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+  },
+  posBadgeText: {
+    color: colors.textSecondary,
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 1,
   },
   voterRating: {
     color: colors.primary,
@@ -898,7 +1055,6 @@ const styles = StyleSheet.create({
     height: 64,
   },
   teamSmall: {
-    color: colors.textSecondary,
     fontSize: 10,
     fontWeight: '900',
     letterSpacing: 1.5,
