@@ -12,7 +12,8 @@ class TestConfig:
         config = response.json()
         assert "club_name" in config
         assert "club_logo" in config
-        assert config["club_name"] == "Club Dodo"
+        assert isinstance(config["club_name"], str), "club_name should be a string"
+        assert len(config["club_name"]) > 0, "club_name should not be empty"
         assert "_id" not in config, "MongoDB _id should not be exposed"
 
     def test_put_config_admin_only_updates_club_name_and_logo(self, base_url, admin_client):

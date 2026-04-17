@@ -168,6 +168,16 @@ class ClubConfigUpdate(BaseModel):
     club_logo: Optional[str] = None  # base64
 
 
+class ForgotPasswordIn(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordIn(BaseModel):
+    email: EmailStr
+    code: str = Field(min_length=6, max_length=6)
+    new_password: str = Field(min_length=6)
+
+
 class GrantEditIn(BaseModel):
     user_id: str
     can_edit_matches: bool
@@ -179,6 +189,8 @@ async def startup():
     await db.users.create_index("email", unique=True)
     await db.users.create_index("id", unique=True)
     await db.matches.create_index("id", unique=True)
+    await db.password_reset_tokens.create_index("expires_at", expireAfterSeconds=0)
+    await db.password_reset_tokens.create_index("email")
     # Seed admin
     admin_email = os.environ["ADMIN_EMAIL"].lower()
     admin_password = os.environ["ADMIN_PASSWORD"]
@@ -258,6 +270,64 @@ async def login(data: LoginIn):
 @api.get("/auth/me")
 async def me(user=Depends(get_current_user)):
     return user_public(user)
+
+
+@api.post("/auth/forgot-password")
+async def forgot_password(data: ForgotPasswordIn):
+    """Dev-mode flow: generate 6-digit code, store it, and return it
+    in the response so the user can enter it on the reset screen.
+    Still silently succeeds when email doesn't exist to avoid leaking
+    registered emails."""
+    import secrets
+    email = data.email.lower()
+    u = await db.users.find_one({"email": email}, {"_id": 0})
+    # Clean up expired tokens for this email to avoid collisions
+    await db.password_reset_tokens.delete_many({"email": email})
+    if not u:
+        return {"ok": True, "dev_code": None, "message": "If that email is registered, a code has been generated."}
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    await db.password_reset_tokens.insert_one(
+        {
+            "email": email,
+            "code_hash": hash_password(code),
+            "expires_at": datetime.now(timezone.utc) + timedelta(hours=1),
+            "used": False,
+        }
+    )
+    logger.info("Password reset code for %s: %s (dev mode)", email, code)
+    return {
+        "ok": True,
+        "dev_code": code,  # dev-mode: returned so the UI can display it
+        "message": "Code generated. It expires in 60 minutes.",
+    }
+
+
+@api.post("/auth/reset-password")
+async def reset_password(data: ResetPasswordIn):
+    email = data.email.lower()
+    token = await db.password_reset_tokens.find_one(
+        {"email": email, "used": False}, sort=[("expires_at", -1)]
+    )
+    if not token:
+        raise HTTPException(400, "No reset code has been requested for this email")
+    expires_at = token["expires_at"]
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at < datetime.now(timezone.utc):
+        raise HTTPException(400, "Code has expired, request a new one")
+    if not verify_password(data.code, token["code_hash"]):
+        raise HTTPException(400, "Invalid code")
+    u = await db.users.find_one({"email": email}, {"_id": 0})
+    if not u:
+        raise HTTPException(400, "Account not found")
+    await db.users.update_one(
+        {"id": u["id"]},
+        {"$set": {"password_hash": hash_password(data.new_password)}},
+    )
+    await db.password_reset_tokens.update_one(
+        {"_id": token["_id"]}, {"$set": {"used": True}}
+    )
+    return {"ok": True, "message": "Password has been reset. You can log in now."}
 
 
 # ---------- Users ----------

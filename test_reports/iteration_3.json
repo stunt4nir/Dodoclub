@@ -1,0 +1,132 @@
+{
+  "summary": "Backend testing complete - All 50 tests passed (41 existing + 9 new forgot-password/reset-password tests). Comprehensive testing of forgot-password dev-mode flow with 6-digit code generation, reset-password with code validation, single-use tokens, expiration, and email enumeration prevention.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_auth.py",
+    "/app/backend/tests/test_users.py",
+    "/app/backend/tests/test_config.py",
+    "/app/backend/tests/test_matches.py",
+    "/app/backend/tests/test_league_features.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/pytest_results_all.xml",
+    "/app/test_reports/pytest/pytest_results_forgot_password.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "✅ POST /api/auth/forgot-password with existing email returns {ok: true, dev_code: '6-digit string', message}",
+    "✅ POST /api/auth/forgot-password with unknown email returns {ok: true, dev_code: null, message} (no email enumeration)",
+    "✅ dev_code is exactly 6 digits (zero-padded if needed, e.g., '091861')",
+    "✅ Reset tokens stored hashed in password_reset_tokens collection with 1-hour TTL",
+    "✅ POST /api/auth/reset-password with correct email+code+new_password succeeds and changes password",
+    "✅ After successful reset, old password no longer works for login; new password works",
+    "✅ POST /api/auth/reset-password with wrong code returns 400 'Invalid code'",
+    "✅ POST /api/auth/reset-password with already-used code returns 400 (tokens marked used=true, single-use)",
+    "✅ POST /api/auth/reset-password before any forgot-password request returns 400 'No reset code has been requested'",
+    "✅ POST /api/auth/reset-password validates password length (min 6 chars, returns 422 validation error)",
+    "✅ Requesting new forgot-password code deletes prior pending tokens for that email (clean state)",
+    "✅ Timezone handling correct: expires_at properly compared with timezone-aware datetime",
+    "✅ All existing auth flows still pass (register, login, me, users, matches, lineup, result)",
+    "✅ No regressions in existing functionality (41 existing tests still pass)"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_auth.py",
+    "/app/backend/tests/test_config.py"
+  ],
+  "success_rate": {
+    "backend": "100% (50/50 tests passed)",
+    "frontend": "N/A (backend-only testing)"
+  },
+  "seed_data_creation": "Tests create unique users per test run using timestamp-based email addresses (TEST_*_{timestamp}@clubdodo.com). Admin user (admin@clubdodo.com / dodo2026) is seeded on startup.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Forgot-password dev-mode flow fully implemented and tested. POST /api/auth/forgot-password returns dev_code directly in response (no email integration). Codes are 6 digits, stored hashed with 1-hour TTL, single-use (marked used=true after reset). Requesting new code deletes prior pending tokens. Unknown emails return dev_code=null (no enumeration). All existing functionality still working (no regressions).",
+  "tests_executed": {
+    "auth": [
+      "POST /api/auth/register - creates user, returns {token, user}",
+      "POST /api/auth/login - admin login returns admin role",
+      "POST /api/auth/login - invalid credentials returns 401",
+      "GET /api/auth/me - with Bearer token returns user",
+      "GET /api/auth/me - without token returns 401",
+      "GET /api/auth/me - with invalid token returns 401",
+      "POST /api/auth/forgot-password - with existing email returns {ok: true, dev_code: '6-digit', message}",
+      "POST /api/auth/forgot-password - with unknown email returns {ok: true, dev_code: null, message}",
+      "POST /api/auth/reset-password - with correct code succeeds and changes password",
+      "POST /api/auth/reset-password - old password fails, new password works after reset",
+      "POST /api/auth/reset-password - with wrong code returns 400 'Invalid code'",
+      "POST /api/auth/reset-password - with already-used code returns 400 (single-use)",
+      "POST /api/auth/reset-password - without prior forgot-password returns 400 'No reset code has been requested'",
+      "POST /api/auth/reset-password - validates password length (min 6 chars, returns 422)",
+      "POST /api/auth/forgot-password - requesting new code deletes prior pending tokens"
+    ],
+    "users": [
+      "GET /api/users - lists users sorted by rating desc",
+      "PUT /api/users/me - updates name, shirt_number, profile_picture, preferred_position",
+      "POST /api/users/grant-edit - admin toggles can_edit_matches",
+      "POST /api/users/grant-edit - non-admin returns 403"
+    ],
+    "config": [
+      "GET /api/config - public, no auth required",
+      "PUT /api/config - admin only, updates club_name and club_logo",
+      "PUT /api/config - non-admin returns 403"
+    ],
+    "matches": [
+      "POST /api/matches - any authenticated user can create",
+      "GET /api/matches - lists all matches",
+      "GET /api/matches/{id} - returns match with votes array",
+      "POST /api/matches/{id}/vote - stores vote, overwrites previous",
+      "POST /api/matches/{id}/generate-lineup - editor only, snake draft by rating",
+      "POST /api/matches/{id}/generate-lineup - non-editor returns 403",
+      "POST /api/matches/{id}/result - editor only, updates stats and rating",
+      "POST /api/matches/{id}/result - editing reverts prior stats",
+      "POST /api/matches/{id}/result - non-editor returns 403",
+      "DELETE /api/matches/{id} - editor only, reverts stats",
+      "DELETE /api/matches/{id} - non-editor returns 403"
+    ],
+    "league_features": [
+      "POST /api/auth/register - accepts preferred_position (GK/DEF/MID/FWD/ANY)",
+      "POST /api/auth/register - without preferred_position defaults to None",
+      "GET /api/auth/me - returns new league fields (preferred_position, wins, draws, losses, league_points)",
+      "PUT /api/users/me - updates preferred_position",
+      "POST /api/matches - accepts match_type ('friendly'|'league') and third_team_enabled (bool)",
+      "POST /api/matches - defaults to match_type='friendly' and third_team_enabled=false",
+      "GET /api/matches/{id} - returns match_type and third_team_enabled",
+      "POST /api/matches/{id}/generate-lineup - with third_team_enabled=true produces team_c",
+      "POST /api/matches/{id}/generate-lineup - with third_team_enabled=false produces empty team_c",
+      "POST /api/matches/{id}/result - league match awards league points (winner +3, loser 0, draw +1 each)",
+      "POST /api/matches/{id}/result - league match draw awards 1 point each",
+      "POST /api/matches/{id}/result - friendly match does NOT award league points",
+      "POST /api/matches/{id}/result - editing league match reverts prior league points",
+      "DELETE /api/matches/{id} - deleting league match reverts league points",
+      "POST /api/matches/{id}/result - 3-team match accepts team_c_score",
+      "POST /api/matches/{id}/result - 3-team match increments matches_played for all 3 teams",
+      "POST /api/matches/{id}/result - 3-team league match does NOT award league points"
+    ]
+  },
+  "verified_requirements": [
+    "✅ POST /api/auth/forgot-password with existing email returns {ok: true, dev_code: '6-digit string', message}",
+    "✅ POST /api/auth/forgot-password with unknown email returns {ok: true, dev_code: null, message} (no email enumeration)",
+    "✅ dev_code is exactly 6 digits (zero-padded, e.g., '091861')",
+    "✅ POST /api/auth/reset-password with correct email+code+new_password succeeds",
+    "✅ After successful reset, old password no longer works for login; new password works",
+    "✅ POST /api/auth/reset-password with wrong code returns 400 'Invalid code'",
+    "✅ POST /api/auth/reset-password with already-used code returns 400 (single-use token)",
+    "✅ POST /api/auth/reset-password before any forgot-password request returns 400 'No reset code has been requested'",
+    "✅ POST /api/auth/reset-password validates password length (min 6 chars)",
+    "✅ Requesting new forgot-password code deletes prior pending tokens for that email",
+    "✅ Reset tokens stored hashed in password_reset_tokens collection",
+    "✅ Reset tokens have 1-hour TTL (expires_at field with MongoDB TTL index)",
+    "✅ Tokens are single-use (marked used=true after successful reset)",
+    "✅ All existing auth flows still pass (register, login, me)",
+    "✅ All existing features still pass (users, matches, lineup, result, league features)",
+    "✅ No regressions (41 existing tests + 9 new tests = 50 total, all passing)"
+  ]
+}

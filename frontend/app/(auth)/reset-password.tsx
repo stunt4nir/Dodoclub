@@ -9,30 +9,56 @@ import {
   Platform,
   ScrollView,
   ActivityIndicator,
-  Image,
+  Alert,
 } from 'react-native';
-import { useRouter, Link } from 'expo-router';
+import { useRouter, useLocalSearchParams, Link } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
+import { api } from '../../src/api';
 import { useAuth } from '../../src/auth';
 import { colors, spacing, radii } from '../../src/theme';
 import { Display, Overline, Muted } from '../../src/typography';
 
-export default function LoginScreen() {
+export default function ResetPasswordScreen() {
   const router = useRouter();
+  const params = useLocalSearchParams<{ email?: string; code?: string }>();
   const { login } = useAuth();
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(params.email || '');
+  const [code, setCode] = useState(params.code || '');
   const [password, setPassword] = useState('');
-  const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
   const onSubmit = async () => {
     setErr(null);
+    if (!email.trim() || code.length !== 6 || password.length < 6) {
+      setErr('Enter your email, 6-digit code, and a new password (min 6 chars).');
+      return;
+    }
     setLoading(true);
     try {
-      await login(email.trim(), password);
-      router.replace('/(tabs)');
+      await api('/auth/reset-password', {
+        method: 'POST',
+        body: {
+          email: email.trim(),
+          code: code.trim(),
+          new_password: password,
+        },
+        auth: false,
+      });
+      // auto sign in with the new password
+      try {
+        await login(email.trim(), password);
+        router.replace('/(tabs)');
+      } catch {
+        Alert.alert(
+          'Password reset',
+          'Your password has been reset. Please sign in.',
+          [{ text: 'OK', onPress: () => router.replace('/(auth)/login') }]
+        );
+      }
     } catch (e: any) {
-      setErr(e.message || 'Login failed');
+      setErr(e.message || 'Reset failed');
     } finally {
       setLoading(false);
     }
@@ -48,18 +74,26 @@ export default function LoginScreen() {
           contentContainerStyle={styles.scroll}
           keyboardShouldPersistTaps="handled"
         >
+          <TouchableOpacity
+            testID="reset-back-btn"
+            onPress={() => router.back()}
+            style={styles.backBtn}
+            hitSlop={12}
+          >
+            <Ionicons name="chevron-back" size={22} color={colors.textPrimary} />
+          </TouchableOpacity>
+
           <View style={styles.brand}>
-            <View style={styles.logoCircle}>
-              <Text style={styles.logoMark}>CD</Text>
-            </View>
-            <Display style={{ marginTop: spacing.md }}>Club Dodo</Display>
-            <Overline style={{ marginTop: 4 }}>Matchday HQ</Overline>
+            <Display>New Password</Display>
+            <Overline style={{ marginTop: 4 }}>
+              Enter your code to reset
+            </Overline>
           </View>
 
           <View style={styles.form}>
             <Text style={styles.label}>EMAIL</Text>
             <TextInput
-              testID="login-email-input"
+              testID="reset-email-input"
               value={email}
               onChangeText={setEmail}
               autoCapitalize="none"
@@ -69,25 +103,37 @@ export default function LoginScreen() {
               style={styles.input}
             />
 
-            <Text style={[styles.label, { marginTop: spacing.md }]}>PASSWORD</Text>
+            <Text style={[styles.label, { marginTop: spacing.md }]}>6-DIGIT CODE</Text>
             <TextInput
-              testID="login-password-input"
+              testID="reset-code-input"
+              value={code}
+              onChangeText={(t) => setCode(t.replace(/[^0-9]/g, '').slice(0, 6))}
+              keyboardType="number-pad"
+              placeholder="123456"
+              placeholderTextColor={colors.textMuted}
+              style={[styles.input, styles.codeInput]}
+              maxLength={6}
+            />
+
+            <Text style={[styles.label, { marginTop: spacing.md }]}>NEW PASSWORD</Text>
+            <TextInput
+              testID="reset-password-input"
               value={password}
               onChangeText={setPassword}
               secureTextEntry
-              placeholder="••••••••"
+              placeholder="At least 6 characters"
               placeholderTextColor={colors.textMuted}
               style={styles.input}
             />
 
             {err && (
-              <Text testID="login-error" style={styles.error}>
+              <Text testID="reset-error" style={styles.error}>
                 {err}
               </Text>
             )}
 
             <TouchableOpacity
-              testID="login-submit-button"
+              testID="reset-submit-btn"
               activeOpacity={0.85}
               onPress={onSubmit}
               disabled={loading}
@@ -96,25 +142,15 @@ export default function LoginScreen() {
               {loading ? (
                 <ActivityIndicator color="#fff" />
               ) : (
-                <Text style={styles.primaryBtnText}>SIGN IN</Text>
+                <Text style={styles.primaryBtnText}>RESET & SIGN IN</Text>
               )}
             </TouchableOpacity>
 
-            <Link href="/(auth)/forgot-password" asChild>
-              <TouchableOpacity
-                testID="forgot-password-link"
-                style={styles.forgotBtn}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.forgotText}>Forgot password?</Text>
-              </TouchableOpacity>
-            </Link>
-
             <View style={styles.switchRow}>
-              <Muted>New to the squad?</Muted>
-              <Link href="/(auth)/register" asChild>
-                <TouchableOpacity testID="go-register-link">
-                  <Text style={styles.link}>  Create account</Text>
+              <Muted>Need a new code?</Muted>
+              <Link href="/(auth)/forgot-password" asChild>
+                <TouchableOpacity testID="reset-go-forgot">
+                  <Text style={styles.link}>  Request again</Text>
                 </TouchableOpacity>
               </Link>
             </View>
@@ -133,23 +169,18 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.xl,
   },
-  brand: { alignItems: 'center', marginBottom: spacing.xl },
-  logoCircle: {
-    width: 88,
-    height: 88,
-    borderRadius: 44,
-    backgroundColor: colors.primary,
+  backBtn: {
+    width: 40,
+    height: 40,
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 4,
-    borderColor: colors.surface,
+    borderRadius: radii.md,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginBottom: spacing.lg,
   },
-  logoMark: {
-    color: '#fff',
-    fontSize: 34,
-    fontWeight: '900',
-    letterSpacing: -1,
-  },
+  brand: { alignItems: 'center', marginBottom: spacing.xl },
   form: {
     backgroundColor: colors.surface,
     borderRadius: radii.lg,
@@ -174,11 +205,14 @@ const styles = StyleSheet.create({
     color: colors.textPrimary,
     fontSize: 16,
   },
-  error: {
-    color: colors.danger,
-    marginTop: spacing.md,
-    fontSize: 13,
+  codeInput: {
+    fontSize: 26,
+    fontWeight: '900',
+    letterSpacing: 8,
+    textAlign: 'center',
+    height: 58,
   },
+  error: { color: colors.danger, marginTop: spacing.md, fontSize: 13 },
   primaryBtn: {
     marginTop: spacing.lg,
     backgroundColor: colors.primary,
@@ -201,20 +235,5 @@ const styles = StyleSheet.create({
     marginTop: spacing.lg,
     alignItems: 'center',
   },
-  link: {
-    color: colors.primary,
-    fontWeight: '800',
-    fontSize: 13,
-  },
-  forgotBtn: {
-    alignItems: 'center',
-    marginTop: spacing.md,
-    paddingVertical: 6,
-  },
-  forgotText: {
-    color: colors.textSecondary,
-    fontSize: 13,
-    fontWeight: '700',
-    textDecorationLine: 'underline',
-  },
+  link: { color: colors.primary, fontWeight: '800', fontSize: 13 },
 });
