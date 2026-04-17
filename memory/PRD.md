@@ -4,7 +4,7 @@
 Custom matchday app for amateur football team **Club Dodo**: organize fixtures, vote availability, auto-generate balanced lineups on a tactical pitch view, track player stats and league standings across seasons.
 
 ## Features
-1. **Authentication** — JWT Bearer tokens (AsyncStorage); register, login, /me.
+1. **Authentication** — JWT Bearer tokens (AsyncStorage); register, login, /me, **forgot-password + reset-password** (dev-mode 6-digit code shown on screen, single-use, 1-hour expiry, no email enumeration).
 2. **Player Profiles** — Editable name, shirt number (1-99), **preferred position (GK / DEF / MID / FWD / ANY)**, profile picture (base64 via gallery pick).
 3. **Match Voting** — Any user can create a fixture with **exact date & kick-off time (HH:MM)**, title, location, team size 3–11. Other players vote **Yes / Reserve / No**.
 4. **Match Types**
