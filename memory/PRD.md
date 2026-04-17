@@ -1,28 +1,32 @@
-# Club Dodo — Product Requirements (MVP v1)
+# Club Dodo — Product Requirements (v1.1)
 
 ## Vision
-A custom matchday app for amateur football team **Club Dodo**: organize fixtures, vote availability, auto-generate balanced lineups on a tactical pitch view, and track player stats across seasons.
+Custom matchday app for amateur football team **Club Dodo**: organize fixtures, vote availability, auto-generate balanced lineups on a tactical pitch view, track player stats and league standings across seasons.
 
-## Core Features (shipped)
-1. **Authentication** — JWT Bearer tokens (AsyncStorage); register, login, /me
-2. **Player Profiles** — Editable name, shirt number (1-99), profile picture (base64 via gallery pick)
-3. **Match Voting** — Any user can create a fixture (title, date/time, location, team size 3–11). Other players vote **Yes / Reserve / No**.
-4. **Auto-Generated Lineup** — Admin/editor triggers a snake-draft lineup from `yes` voters ranked by rating, splitting into Team Dodo vs Team Orange. Overflow + `reserve` voters go to reserves. Rendered on a tactical pitch with formation markers per team size.
-5. **Result Recording** — Editor enters final score + per-player goals/assists. Stats & `matches_played` update automatically for participants. Editing a result safely reverts prior contributions.
-6. **Player Rating (transparent)** — `rating = goals × 3 + assists × 2 + matches_played`.
-7. **Club Customisation** — Admin can update club name & logo (base64).
-8. **Squad Leaderboard** — All players ranked by rating with quick stats.
-9. **Match History** — Past matches with scores and lineups preserved.
-10. **Access Control** — First seeded user is admin; admin can grant "match-editor" access to any player.
+## Features
+1. **Authentication** — JWT Bearer tokens (AsyncStorage); register, login, /me.
+2. **Player Profiles** — Editable name, shirt number (1-99), **preferred position (GK / DEF / MID / FWD / ANY)**, profile picture (base64 via gallery pick).
+3. **Match Voting** — Any user can create a fixture with **exact date & kick-off time (HH:MM)**, title, location, team size 3–11. Other players vote **Yes / Reserve / No**.
+4. **Match Types**
+   - **Friendly** — casual, no points
+   - **League** — Win = 3 pts · Draw = 1 pt · Loss = 0 pts, tallied per participant
+5. **Team Colours** — Default teams **Team Red** and **Team Black**; optional **Team White** as a third team (friendly matches only, rotating substitute team for larger squads).
+6. **Auto-Generated Lineup** — Editor triggers snake-draft lineup from `yes` voters ranked by rating, splitting into 2 teams (Red / Black) or 3 teams (Red / Black / White). Overflow + `reserve` voters → reserves. Rendered on a tactical pitch with formation markers per team size.
+7. **Result Recording** — Editor enters final score per team (incl. 3rd team if enabled) + per-player goals/assists. Stats, `matches_played`, and league W/D/L/points update automatically. Editing or deleting a result safely reverts prior contributions.
+8. **Player Rating (transparent)** — `rating = goals × 3 + assists × 2 + matches_played`.
+9. **Club Customisation** — Admin can update club name & logo (base64).
+10. **Squad Leaderboard** — Tabbed view: **FORM** (sorted by rating) or **LEAGUE** (sorted by league points) with W/D/L/PTS column.
+11. **Match History + Delete** — Past matches preserved with scores and lineups. Editors can delete any match (with safe stat reversal) from the match list or detail.
+12. **Access Control** — First seeded user = admin; admin grants "match-editor" access to any player.
 
 ## Architecture
-- **Backend**: FastAPI + Motor (async MongoDB). All routes prefixed `/api`. UUID string ids only; `_id` never returned.
-- **Frontend**: Expo Router with 4 bottom tabs (Home, Squad, Matches, Profile) and `/match/[id]` detail screen.
-- **Theme**: Performance-Pro dark archetype, zinc surfaces + Blaze Orange (`#FF4500`) accent. Uppercase athletic typography.
+- Backend: FastAPI + Motor (async MongoDB), UUID string ids, no `_id` in responses.
+- Frontend: Expo Router, 4 tabs + `/match/[id]` detail.
+- Theme: Dark Performance-Pro + Blaze Orange accent (#FF4500).
 
-## Smart Enhancement (shareability hook)
-The tactical **pitch-view lineup** is screenshot-worthy and designed to be shared in the team group chat the moment it's generated — driving repeat usage and new sign-ups ahead of every fixture.
+## Smart Enhancement
+Tactical pitch-view lineup remains the shareability hook — screenshot and drop into team chat on matchday. League table adds return-visit cadence ("Am I still top?").
 
 ## Seeded Admin
-- Email: `admin@clubdodo.com`
+- Email: `admin@clubdodo.com`  
 - Password: `dodo2026`
