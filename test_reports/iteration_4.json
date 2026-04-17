@@ -1,0 +1,142 @@
+{
+  "summary": "Backend testing complete - All 60 tests passed (50 existing + 10 new lineup algorithm tests). Comprehensive testing of upgraded lineup algorithm with position-based balancing, auto 3rd team activation for friendly matches, league constraint enforcement, and result recording for 3-team matches.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_lineup_algorithm.py",
+    "/app/backend/tests/test_auth.py",
+    "/app/backend/tests/test_users.py",
+    "/app/backend/tests/test_config.py",
+    "/app/backend/tests/test_matches.py",
+    "/app/backend/tests/test_league_features.py",
+    "/app/backend/tests/conftest.py",
+    "/app/test_reports/pytest/pytest_results_iteration4.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "✅ _build_lineup buckets yes-voters by preferred_position (GK/DEF/MID/FWD/ANY - null maps to ANY)",
+    "✅ Each position bucket sorted by rating descending for skill distribution",
+    "✅ Players assigned to team with fewest players, tie-break by lowest total team rating",
+    "✅ Position distribution balanced: with 2 GK, 3 DEF, 3 MID, 2 FWD across 2 teams, each position differs by ≤1 player",
+    "✅ Auto 3rd team activation: len(yes_voters) >= team_size * 3 AND match_type != 'league'",
+    "✅ Friendly match with 15 yes voters (team_size=5) auto-enables 3 teams (5+5+5)",
+    "✅ League match with 15+ yes voters stays 2 teams (5+5+5 reserves) - league constraint enforced",
+    "✅ third_team_enabled=true persisted to match document when auto-bump occurs (lines 559-560)",
+    "✅ Subsequent GET /api/matches/{id} returns third_team_enabled=true after auto-bump",
+    "✅ League match does NOT flip third_team_enabled even with 20+ yes voters",
+    "✅ Rating balance: algorithm distributes by position first, then rating (structure verified)",
+    "✅ Explicit 'reserve' vote always lands in reserves regardless of team capacity",
+    "✅ Overflow yes voters beyond num_teams * team_size go to reserves (16 yes with 5v5 3-team → 15 on teams + 1 reserve)",
+    "✅ Lineup generation is idempotent: calling generate-lineup twice yields same team compositions",
+    "✅ Result recording on auto-3rd-team match accepts team_c_score and updates all 3 teams' participants",
+    "✅ All 12 players in auto-3rd-team match have matches_played incremented",
+    "✅ Player stats (goals, assists) correctly recorded and rating computed (goals*3 + assists*2 + matches*1)",
+    "✅ No regressions: all 50 existing tests still pass (auth, forgot-password, users, config, matches, league features)"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_lineup_algorithm.py"
+  ],
+  "success_rate": {
+    "backend": "100% (60/60 tests passed)",
+    "frontend": "N/A (backend-only testing)"
+  },
+  "seed_data_creation": "Tests create unique users per test run using timestamp-based email addresses (TEST_*_{timestamp}@clubdodo.com). Admin user (admin@clubdodo.com / dodo2026) is seeded on startup.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Lineup algorithm upgraded to balance by BOTH position AND rating. Algorithm buckets yes-voters by preferred_position (GK/DEF/MID/FWD/ANY), sorts each bucket by rating desc, then assigns to team with fewest players (tie-break by lowest total rating). Auto 3rd team activation when yes-voters >= 3*team_size AND match_type != 'league' (league stays 2-team). third_team_enabled flag persisted to match document when auto-bump occurs. Result recording handles team_c_score and updates all 3 teams' participants. All existing functionality intact (no regressions).",
+  "tests_executed": {
+    "lineup_algorithm_new": [
+      "Position-based balancing: 10 players (2 GK, 3 DEF, 3 MID, 2 FWD) distributed across 2 teams with each position balanced within 1 player",
+      "Auto 3rd team: 15 yes voters (3*team_size) in friendly match auto-enables 3 teams (5+5+5)",
+      "League constraint: 15 yes voters in league match stays 2 teams (5+5+5 reserves)",
+      "Persistence: third_team_enabled=true persisted to match document after auto-bump, verified via GET",
+      "League no auto-bump: 20 yes voters in league match does NOT flip third_team_enabled",
+      "Rating balance: algorithm structure verified (position-first, then rating tie-break)",
+      "Reserve vote: explicit 'reserve' vote always lands in reserves (2 reserve voters confirmed in reserves)",
+      "Overflow reserves: 16 yes voters with 5v5 3-team → 15 on teams + 1 in reserves",
+      "Idempotency: calling generate-lineup twice yields identical team compositions (same user_ids in each team)",
+      "Result recording: auto-3rd-team match accepts team_c_score, updates all 12 players' matches_played, records goals/assists/rating"
+    ],
+    "auth": [
+      "POST /api/auth/register - creates user, returns {token, user}",
+      "POST /api/auth/login - admin login returns admin role",
+      "POST /api/auth/login - invalid credentials returns 401",
+      "GET /api/auth/me - with Bearer token returns user",
+      "GET /api/auth/me - without token returns 401",
+      "GET /api/auth/me - with invalid token returns 401",
+      "POST /api/auth/forgot-password - with existing email returns {ok: true, dev_code: '6-digit', message}",
+      "POST /api/auth/forgot-password - with unknown email returns {ok: true, dev_code: null, message}",
+      "POST /api/auth/reset-password - with correct code succeeds and changes password",
+      "POST /api/auth/reset-password - old password fails, new password works after reset",
+      "POST /api/auth/reset-password - with wrong code returns 400 'Invalid code'",
+      "POST /api/auth/reset-password - with already-used code returns 400 (single-use)",
+      "POST /api/auth/reset-password - without prior forgot-password returns 400 'No reset code has been requested'",
+      "POST /api/auth/reset-password - validates password length (min 6 chars, returns 422)",
+      "POST /api/auth/forgot-password - requesting new code deletes prior pending tokens"
+    ],
+    "users": [
+      "GET /api/users - lists users sorted by rating desc",
+      "PUT /api/users/me - updates name, shirt_number, profile_picture, preferred_position",
+      "POST /api/users/grant-edit - admin toggles can_edit_matches",
+      "POST /api/users/grant-edit - non-admin returns 403"
+    ],
+    "config": [
+      "GET /api/config - public, no auth required",
+      "PUT /api/config - admin only, updates club_name and club_logo",
+      "PUT /api/config - non-admin returns 403"
+    ],
+    "matches": [
+      "POST /api/matches - any authenticated user can create",
+      "GET /api/matches - lists all matches",
+      "GET /api/matches/{id} - returns match with votes array",
+      "POST /api/matches/{id}/vote - stores vote, overwrites previous",
+      "POST /api/matches/{id}/generate-lineup - editor only, position+rating balanced lineup",
+      "POST /api/matches/{id}/generate-lineup - non-editor returns 403",
+      "POST /api/matches/{id}/result - editor only, updates stats and rating",
+      "POST /api/matches/{id}/result - editing reverts prior stats",
+      "POST /api/matches/{id}/result - non-editor returns 403",
+      "DELETE /api/matches/{id} - editor only, reverts stats",
+      "DELETE /api/matches/{id} - non-editor returns 403"
+    ],
+    "league_features": [
+      "POST /api/auth/register - accepts preferred_position (GK/DEF/MID/FWD/ANY)",
+      "POST /api/auth/register - without preferred_position defaults to None",
+      "GET /api/auth/me - returns new league fields (preferred_position, wins, draws, losses, league_points)",
+      "PUT /api/users/me - updates preferred_position",
+      "POST /api/matches - accepts match_type ('friendly'|'league') and third_team_enabled (bool)",
+      "POST /api/matches - defaults to match_type='friendly' and third_team_enabled=false",
+      "GET /api/matches/{id} - returns match_type and third_team_enabled",
+      "POST /api/matches/{id}/generate-lineup - with third_team_enabled=true produces team_c",
+      "POST /api/matches/{id}/generate-lineup - with third_team_enabled=false produces empty team_c",
+      "POST /api/matches/{id}/result - league match awards league points (winner +3, loser 0, draw +1 each)",
+      "POST /api/matches/{id}/result - league match draw awards 1 point each",
+      "POST /api/matches/{id}/result - friendly match does NOT award league points",
+      "POST /api/matches/{id}/result - editing league match reverts prior league points",
+      "DELETE /api/matches/{id} - deleting league match reverts league points",
+      "POST /api/matches/{id}/result - 3-team match accepts team_c_score",
+      "POST /api/matches/{id}/result - 3-team match increments matches_played for all 3 teams",
+      "POST /api/matches/{id}/result - 3-team league match does NOT award league points"
+    ]
+  },
+  "verified_requirements": [
+    "✅ _build_lineup with 2*team_size yes voters and mixed positions produces 2 teams with evenly distributed positions (each team has similar GK/DEF/MID/FWD counts within 1)",
+    "✅ _build_lineup with 3*team_size yes voters in a FRIENDLY match auto-enables 3rd team (returns third_team_enabled=true with team_c populated)",
+    "✅ _build_lineup with 3*team_size yes voters in a LEAGUE match STAYS 2 teams (third_team_enabled=false; remaining voters go to reserves)",
+    "✅ POST /api/matches/{id}/generate-lineup on a match with sufficient friendly yes votes persists third_team_enabled=true on the match document so subsequent GETs include 3-team info",
+    "✅ POST /api/matches/{id}/generate-lineup on a league match does NOT flip third_team_enabled even with many yes voters",
+    "✅ Rating balance across teams is reasonable (algorithm structure verified - position-first distribution with rating tie-break)",
+    "✅ Explicit 'reserve' vote still always lands in reserves regardless of capacity",
+    "✅ Overflow yes voters beyond num_teams * team_size go to reserves (e.g., 16 yes with 5v5 3-team → 15 on teams + 1 reserve)",
+    "✅ Previous lineup can be regenerated (idempotent) - calling generate-lineup twice yields same team compositions",
+    "✅ No regressions - all previous 50 tests still pass (auth, forgot-password, matches, users, config, vote, league points, delete)",
+    "✅ Result recording on an auto-3rd-team match works: accepts team_c_score, updates stats for all 3 teams' participants"
+  ]
+}

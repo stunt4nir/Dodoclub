@@ -11,7 +11,7 @@ Custom matchday app for amateur football team **Club Dodo**: organize fixtures, 
    - **Friendly** — casual, no points
    - **League** — Win = 3 pts · Draw = 1 pt · Loss = 0 pts, tallied per participant
 5. **Team Colours** — Default teams **Team Red** and **Team Black**; optional **Team White** as a third team (friendly matches only, rotating substitute team for larger squads).
-6. **Auto-Generated Lineup** — Editor triggers snake-draft lineup from `yes` voters ranked by rating, splitting into 2 teams (Red / Black) or 3 teams (Red / Black / White). Overflow + `reserve` voters → reserves. Rendered on a tactical pitch with formation markers per team size.
+6. **Auto-Generated Lineup (position + rating balanced)** — Editor triggers a position-aware draft: yes-voters are bucketed by preferred position (GK/DEF/MID/FWD/ANY), sorted by rating, and distributed across teams with the fewest players (ties broken by lowest team-rating) so each team gets a balanced mix of positions *and* skill. If `yes ≥ team_size × 3` (friendly only — league stays 2-team), a **3rd team (White)** auto-activates and the whole pool re-shuffles across all three teams. Overflow + explicit `reserve` votes → reserves.
 7. **Result Recording** — Editor enters final score per team (incl. 3rd team if enabled) + per-player goals/assists. Stats, `matches_played`, and league W/D/L/points update automatically. Editing or deleting a result safely reverts prior contributions.
 8. **Player Rating (transparent)** — `rating = goals × 3 + assists × 2 + matches_played`.
 9. **Club Customisation** — Admin can update club name & logo (base64).

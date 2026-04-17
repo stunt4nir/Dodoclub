@@ -333,7 +333,7 @@ async def reset_password(data: ResetPasswordIn):
 # ---------- Users ----------
 @api.get("/users")
 async def list_users(user=Depends(get_current_user)):
-    users = await db.users.find({}, {"_id": 0, "password_hash": 0}).to_list(1000)
+    users = await db.users.find({}, {"_id": 0, "password_hash": 0}).to_list(5000)
     pubs = [user_public(u) for u in users]
     pubs.sort(key=lambda x: x["rating"], reverse=True)
     return pubs
@@ -415,7 +415,7 @@ def _match_public(m: dict, users_by_id: dict) -> dict:
 
 
 async def _users_map():
-    users = await db.users.find({}, {"_id": 0, "password_hash": 0}).to_list(1000)
+    users = await db.users.find({}, {"_id": 0, "password_hash": 0}).to_list(5000)
     return {u["id"]: u for u in users}
 
 
@@ -471,38 +471,74 @@ async def vote_match(mid: str, data: VoteIn, user=Depends(get_current_user)):
     return _match_public(m, umap)
 
 
-def _build_lineup(vote_list: list, team_size: int, third_team_enabled: bool = False) -> dict:
-    """Distribute 'yes' voters between teams using snake draft by rating.
-    If third_team_enabled: split into 3 teams (A/B/C). Otherwise 2 teams (A/B).
-    Overflow go to reserves. Users who voted 'reserve' also go to reserves."""
+def _build_lineup(
+    vote_list: list,
+    team_size: int,
+    third_team_enabled: bool = False,
+    match_type: str = "friendly",
+) -> dict:
+    """Balanced snake draft by position + rating.
+
+    - Yes voters are grouped by preferred_position (GK/DEF/MID/FWD/ANY).
+    - Each bucket is sorted by rating desc; players are then assigned to the
+      team with the fewest players, tie-broken by lowest total team rating.
+      This naturally distributes both positions and skill.
+    - A 3rd team auto-activates when yes voters >= team_size * 3 (unless this
+      is a league match — league stays 2-team to keep points meaningful).
+    - Any yes voter past the total capacity goes to reserves along with the
+      users who explicitly voted 'reserve'.
+    """
     yes_voters = [v for v in vote_list if v["vote"] == "yes"]
     reserve_voters = [v for v in vote_list if v["vote"] == "reserve"]
-    # Sort by rating desc
-    yes_voters.sort(key=lambda x: x.get("rating", 0), reverse=True)
 
-    num_teams = 3 if third_team_enabled else 2
-    capacity = team_size * num_teams
-    on_pitch = yes_voters[:capacity]
-    overflow = yes_voters[capacity:]
+    auto_third = (
+        len(yes_voters) >= team_size * 3 and match_type != "league"
+    )
+    num_teams = 3 if (third_team_enabled or auto_third) else 2
+
+    position_order = ["GK", "DEF", "MID", "FWD", "ANY"]
+
+    def get_pos(p: dict) -> str:
+        v = p.get("preferred_position")
+        return v if v in position_order else "ANY"
+
+    buckets: dict = {p: [] for p in position_order}
+    for p in yes_voters:
+        buckets[get_pos(p)].append(p)
+    for pos in position_order:
+        buckets[pos].sort(key=lambda x: x.get("rating", 0), reverse=True)
 
     teams: List[List[dict]] = [[] for _ in range(num_teams)]
-    # Snake draft across num_teams
-    for i, p in enumerate(on_pitch):
-        round_num = i // num_teams
-        pos_in_round = i % num_teams
-        if round_num % 2 == 1:
-            pos_in_round = num_teams - 1 - pos_in_round
-        teams[pos_in_round].append(p)
+    overflow: List[dict] = []
 
-    lineup = {
+    for pos in position_order:
+        for p in buckets[pos]:
+            available = [i for i in range(num_teams) if len(teams[i]) < team_size]
+            if not available:
+                overflow.append(p)
+                continue
+            # Prefer team with fewest players; tie-break by lowest cumulative rating
+            available.sort(
+                key=lambda i: (
+                    len(teams[i]),
+                    sum(x.get("rating", 0) for x in teams[i]),
+                )
+            )
+            teams[available[0]].append(p)
+
+    # Cosmetic sort inside each team: GK → DEF → MID → FWD → ANY, then rating desc
+    pos_rank = {p: i for i, p in enumerate(position_order)}
+    for t in teams:
+        t.sort(key=lambda p: (pos_rank.get(get_pos(p), 99), -p.get("rating", 0)))
+
+    return {
         "team_a": teams[0],
         "team_b": teams[1],
         "team_c": teams[2] if num_teams == 3 else [],
         "reserves": overflow + reserve_voters,
         "team_size": team_size,
-        "third_team_enabled": third_team_enabled,
+        "third_team_enabled": num_teams == 3,
     }
-    return lineup
 
 
 @api.post("/matches/{mid}/generate-lineup")
@@ -513,11 +549,16 @@ async def generate_lineup(mid: str, user=Depends(require_editor)):
     umap = await _users_map()
     full = _match_public(m, umap)
     lineup = _build_lineup(
-        full["votes"], m.get("team_size", 5), m.get("third_team_enabled", False)
+        full["votes"],
+        m.get("team_size", 5),
+        m.get("third_team_enabled", False),
+        m.get("match_type", "friendly"),
     )
-    await db.matches.update_one(
-        {"id": mid}, {"$set": {"lineup": lineup, "status": "scheduled"}}
-    )
+    update = {"lineup": lineup, "status": "scheduled"}
+    # Persist auto-bump so the UI (and result modal) reflect 3-team mode
+    if lineup["third_team_enabled"] and not m.get("third_team_enabled"):
+        update["third_team_enabled"] = True
+    await db.matches.update_one({"id": mid}, {"$set": update})
     m = await db.matches.find_one({"id": mid}, {"_id": 0})
     return _match_public(m, umap)
 
@@ -567,8 +608,13 @@ async def record_result(mid: str, data: MatchResultIn, user=Depends(require_edit
             full["votes"],
             m.get("team_size", 5),
             m.get("third_team_enabled", False),
+            m.get("match_type", "friendly"),
         )
-        await db.matches.update_one({"id": mid}, {"$set": {"lineup": lineup}})
+        set_on_auto = {"lineup": lineup}
+        if lineup["third_team_enabled"] and not m.get("third_team_enabled"):
+            set_on_auto["third_team_enabled"] = True
+            m["third_team_enabled"] = True
+        await db.matches.update_one({"id": mid}, {"$set": set_on_auto})
         m["lineup"] = lineup
 
     # If a prior result exists, revert previous contributions first
