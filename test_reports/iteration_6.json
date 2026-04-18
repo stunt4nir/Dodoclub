@@ -1,0 +1,92 @@
+{
+  "summary": "Backend testing complete - All 94 tests passed (81 existing + 13 new iteration 6 tests). Comprehensive testing of guest player functionality: editors can manually add guests to lineups, guests get synthetic IDs, stats/league points only update for registered users, validation enforced.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration6_guest_players.py",
+    "/app/test_reports/pytest/pytest_results_iteration6_final.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "✅ GuestRef model accepts name (1-40 chars) and optional shirt_number (1-99)",
+    "✅ LineupOverrideIn accepts Union[str, GuestRef] for team_a, team_b, team_c, reserves",
+    "✅ PUT /api/matches/{id}/lineup hydrate() function handles both user_ids (strings) and guest objects",
+    "✅ Guests get synthetic user_ids prefixed with 'guest:' followed by UUID",
+    "✅ Guests have is_guest=true, vote='guest', rating=0, profile_picture=null, preferred_position=null",
+    "✅ Registered users who didn't vote are hydrated from users collection with vote defaulting to 'yes'",
+    "✅ Registered users who voted have their original vote preserved in lineup",
+    "✅ POST /api/matches/{id}/result skips guests when updating goals/assists/matches_played (checks user_id.startswith('guest:'))",
+    "✅ Editing match result with guests: only real users' stats are reverted and re-applied",
+    "✅ DELETE /api/matches/{id} with guests: only real users' stats are reverted",
+    "✅ League match result with guests: _apply_league_delta skips guests when awarding league points",
+    "✅ Duplicate detection works for registered user_ids (400 error), but multiple guests with same name allowed (each gets unique synthetic ID)",
+    "✅ Team size caps enforced when mixing registered users and guests",
+    "✅ Guest name validation: 1-40 characters (422 error if empty or >40)",
+    "✅ Guest shirt_number validation: 1-99 or null (422 error if 0 or >99)",
+    "✅ No regressions - all 81 existing tests still pass"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration6_guest_players.py"
+  ],
+  "success_rate": {
+    "backend": "100% (94/94 tests passed)",
+    "frontend": "N/A (backend-only testing)"
+  },
+  "seed_data_creation": "Tests create unique users per test run using timestamp-based email addresses (TEST_*_{timestamp}@clubdodo.com). Admin user (admin@clubdodo.com / dodo2026) is seeded on startup.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration 6 adds guest player support: (1) PUT /api/matches/{id}/lineup now accepts Union[str, GuestRef] per team, where GuestRef = {name: str (1-40), shirt_number: int? (1-99)}. (2) Guests get synthetic IDs 'guest:<uuid>' on server. (3) Guests carry is_guest=true and vote='guest' in hydrated lineup. (4) record_result and _apply_league_delta skip any user_id starting with 'guest:' when writing DB stats. (5) Duplicate detection only applies to registered users; multiple guests with same name allowed. (6) Team size caps enforced for mixed entries. All features working correctly with proper validation.",
+  "tests_executed": {
+    "iteration6_guest_lineup": [
+      "PUT /api/matches/{id}/lineup accepts mixed user_ids and guest objects {name, shirt_number}",
+      "Guests get synthetic user_ids prefixed with 'guest:' followed by UUID",
+      "Guests have is_guest=true, vote='guest', rating=0, profile_picture=null, preferred_position=null",
+      "Registered user who didn't vote is hydrated from users collection with vote='yes'",
+      "Registered user who voted has original vote preserved in lineup"
+    ],
+    "iteration6_guest_match_result": [
+      "POST /api/matches/{id}/result with guests: only real users get goals/assists/matches_played incremented",
+      "Editing match result with guests: only real users' stats reverted and re-applied",
+      "DELETE /api/matches/{id} with guests: only real users' stats reverted"
+    ],
+    "iteration6_guest_league": [
+      "League match result with guests: only registered users get league points (guests skipped)"
+    ],
+    "iteration6_guest_validation": [
+      "Duplicate registered user_ids rejected (400), multiple guests with same name allowed (unique synthetic IDs)",
+      "Team size caps enforced with mixed registered users and guests",
+      "Guest name validation: 1-40 characters (422 if empty or >40)",
+      "Guest shirt_number validation: 1-99 or null (422 if 0 or >99)"
+    ],
+    "existing_tests_no_regressions": [
+      "Auth: 15 tests (register, login, me, forgot-password, reset-password)",
+      "Config: 3 tests (get config, update config admin-only)",
+      "Users: 4 tests (list users, update profile, grant-edit admin-only)",
+      "Matches: 11 tests (CRUD, voting, lineup generation, result recording, delete)",
+      "League Features: 17 tests (preferred_position, match_type, third_team_enabled, league points, 3-team matches)",
+      "Lineup Algorithm: 10 tests (position balancing, auto 3rd team, rating balance, idempotency)",
+      "Iteration 5: 21 tests (duration_minutes, timer controls, lineup override)"
+    ]
+  },
+  "verified_requirements": [
+    "✅ PUT /api/matches/{id}/lineup accepts mixed entries: string user_ids AND guest objects {name, shirt_number} in same team array",
+    "✅ Guest entries get synthetic user_ids prefixed with 'guest:' in stored lineup",
+    "✅ Guest entries have is_guest=true, vote='guest', rating=0, and include provided name and shirt_number",
+    "✅ Adding registered user who didn't vote works - hydrated from users collection (vote defaults to 'yes')",
+    "✅ POST /api/matches/{id}/result with mix of real user stats and guest user stats - only real users get goals/assists/matches_played incremented; guests safely ignored (no 500, no DB write)",
+    "✅ Editing match result with guests safely reverts registered user stats only (guest deltas are no-ops, no error)",
+    "✅ DELETE /api/matches/{id} for played match with guests reverts real users' stats and succeeds with ok:true",
+    "✅ League match result with guests awards league points only to registered users in winning team (guests skipped)",
+    "✅ Duplicate detection works for registered user_ids across teams (400 error); multiple guests with same name allowed (each gets unique synthetic id)",
+    "✅ Team size caps enforced when mixing users and guests",
+    "✅ No regressions - previous 81 tests still pass (auth, forgot-password, match CRUD, voting, lineup algorithm, league, timer, lineup override with user_ids only)"
+  ]
+}

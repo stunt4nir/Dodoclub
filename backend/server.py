@@ -10,7 +10,7 @@ import logging
 import bcrypt
 import jwt
 from datetime import datetime, timezone, timedelta
-from typing import List, Optional, Literal
+from typing import List, Optional, Literal, Union
 
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request
 from starlette.middleware.cors import CORSMiddleware
@@ -151,11 +151,16 @@ class VoteIn(BaseModel):
     vote: Literal["yes", "no", "reserve"]
 
 
+class GuestRef(BaseModel):
+    name: str = Field(min_length=1, max_length=40)
+    shirt_number: Optional[int] = Field(default=None, ge=1, le=99)
+
+
 class LineupOverrideIn(BaseModel):
-    team_a: List[str] = []
-    team_b: List[str] = []
-    team_c: List[str] = []
-    reserves: List[str] = []
+    team_a: List[Union[str, GuestRef]] = []
+    team_b: List[Union[str, GuestRef]] = []
+    team_c: List[Union[str, GuestRef]] = []
+    reserves: List[Union[str, GuestRef]] = []
 
 
 class PlayerStatLine(BaseModel):
@@ -597,24 +602,39 @@ def _player_mini(u: dict) -> dict:
 async def override_lineup(
     mid: str, data: LineupOverrideIn, user=Depends(require_editor)
 ):
-    """Manual override of a match lineup. Editor provides arrays of user_ids
-    per team; the server rehydrates them into player objects."""
+    """Manual override of a match lineup. Entries can be either a user_id
+    string (registered Club Dodo user) or a guest object {name, shirt_number}.
+    Guests get synthetic ids prefixed with 'guest:' so stat updates can skip them."""
     m = await db.matches.find_one({"id": mid}, {"_id": 0})
     if not m:
         raise HTTPException(404, "Match not found")
     umap = await _users_map()
     votes = m.get("votes", {})
 
-    def hydrate(uids: List[str]) -> List[dict]:
+    def hydrate(entries: List[Union[str, GuestRef]]) -> List[dict]:
         out = []
-        for uid in uids:
-            u = umap.get(uid)
-            if not u:
-                continue
-            mini = _player_mini(u)
-            # preserve original vote if it exists
-            mini["vote"] = votes.get(uid, "yes")
-            out.append(mini)
+        for entry in entries:
+            if isinstance(entry, str):
+                u = umap.get(entry)
+                if not u:
+                    continue
+                mini = _player_mini(u)
+                mini["vote"] = votes.get(u["id"], "yes")
+                out.append(mini)
+            else:
+                # Guest player
+                out.append(
+                    {
+                        "user_id": f"guest:{uuid.uuid4()}",
+                        "name": entry.name,
+                        "shirt_number": entry.shirt_number,
+                        "profile_picture": None,
+                        "preferred_position": None,
+                        "rating": 0,
+                        "vote": "guest",
+                        "is_guest": True,
+                    }
+                )
         return out
 
     team_a = hydrate(data.team_a)
@@ -622,15 +642,16 @@ async def override_lineup(
     team_c = hydrate(data.team_c)
     reserves = hydrate(data.reserves)
 
-    # Validate no duplicates across teams
+    # Validate no duplicate user_ids (only meaningful for registered users)
     seen = set()
     for roster in (team_a, team_b, team_c, reserves):
         for p in roster:
+            if p["user_id"].startswith("guest:"):
+                continue
             if p["user_id"] in seen:
                 raise HTTPException(400, f"Player {p['name']} appears in multiple teams")
             seen.add(p["user_id"])
 
-    # Enforce team_size caps (reserves unlimited)
     ts = m.get("team_size", 5)
     for label, roster in (("Team Red", team_a), ("Team Black", team_b), ("Team White", team_c)):
         if len(roster) > ts:
@@ -715,7 +736,7 @@ def _league_outcome(team_score: int, opponent_score: int) -> str:
 
 
 async def _apply_league_delta(user_ids: List[str], outcome: str, sign: int):
-    """sign=+1 to apply, -1 to revert."""
+    """sign=+1 to apply, -1 to revert. Skips guest IDs."""
     if not user_ids:
         return
     points_map = {"win": 3, "draw": 1, "loss": 0}
@@ -725,6 +746,8 @@ async def _apply_league_delta(user_ids: List[str], outcome: str, sign: int):
         "league_points": points_map[outcome] * sign,
     }
     for uid in user_ids:
+        if uid.startswith("guest:"):
+            continue
         await db.users.update_one({"id": uid}, {"$inc": inc})
 
 
@@ -781,11 +804,15 @@ async def record_result(mid: str, data: MatchResultIn, user=Depends(require_edit
     team_c_uids = [p["user_id"] for p in lineup.get("team_c", []) or []]
     participants = team_a_uids + team_b_uids + team_c_uids
 
-    # Apply matches_played
+    # Apply matches_played (skip guests)
     for uid in participants:
+        if uid.startswith("guest:"):
+            continue
         await db.users.update_one({"id": uid}, {"$inc": {"matches_played": 1}})
-    # Apply per-player goal/assist stats
+    # Apply per-player goal/assist stats (skip guests)
     for s in data.stats:
+        if s.user_id.startswith("guest:"):
+            continue
         await db.users.update_one(
             {"id": s.user_id},
             {"$inc": {"goals": int(s.goals), "assists": int(s.assists)}},

@@ -144,6 +144,11 @@ export default function MatchDetail() {
   const [playerStats, setPlayerStats] = useState<Record<string, { goals: number; assists: number }>>({});
   const [lineupEditOpen, setLineupEditOpen] = useState(false);
   const [draftBuckets, setDraftBuckets] = useState<Record<string, Bucket>>({});
+  const [draftExtras, setDraftExtras] = useState<Vote[]>([]); // added guests or non-lineup users
+  const [allUsers, setAllUsers] = useState<any[]>([]);
+  const [addPickerOpen, setAddPickerOpen] = useState(false);
+  const [guestName, setGuestName] = useState('');
+  const [guestShirt, setGuestShirt] = useState('');
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -238,7 +243,7 @@ export default function MatchDetail() {
     ]);
   };
 
-  const openLineupEdit = () => {
+  const openLineupEdit = async () => {
     if (!match?.lineup) return;
     const b: Record<string, Bucket> = {};
     for (const p of match.lineup.team_a) b[p.user_id] = 'team_a';
@@ -246,13 +251,86 @@ export default function MatchDetail() {
     for (const p of match.lineup.team_c) b[p.user_id] = 'team_c';
     for (const p of match.lineup.reserves) b[p.user_id] = 'reserves';
     setDraftBuckets(b);
+    setDraftExtras([]);
+    try {
+      const users = await api<any[]>('/users');
+      setAllUsers(users);
+    } catch { /* ignore */ }
     setLineupEditOpen(true);
+  };
+
+  const addRegisteredToLineup = (u: any) => {
+    const entry: Vote = {
+      user_id: u.id,
+      name: u.name,
+      shirt_number: u.shirt_number,
+      profile_picture: u.profile_picture,
+      preferred_position: u.preferred_position,
+      rating: u.rating,
+      vote: 'yes',
+    };
+    setDraftExtras((prev) => [...prev, entry]);
+    setDraftBuckets((b) => ({ ...b, [u.id]: 'reserves' }));
+    setAddPickerOpen(false);
+  };
+
+  const addGuestToLineup = () => {
+    if (!guestName.trim()) {
+      Alert.alert('Name required', 'Enter a guest name.');
+      return;
+    }
+    const shirt = guestShirt ? parseInt(guestShirt, 10) : null;
+    const tempId = `guest:new:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
+    const entry: Vote & { is_guest?: boolean } = {
+      user_id: tempId,
+      name: guestName.trim(),
+      shirt_number: Number.isFinite(shirt as number) ? (shirt as number) : null,
+      profile_picture: null,
+      preferred_position: null,
+      rating: 0,
+      vote: 'yes' as any,
+    };
+    (entry as any).is_guest = true;
+    (entry as any).guest_name = guestName.trim();
+    (entry as any).guest_shirt = entry.shirt_number;
+    setDraftExtras((prev) => [...prev, entry]);
+    setDraftBuckets((b) => ({ ...b, [tempId]: 'reserves' }));
+    setGuestName('');
+    setGuestShirt('');
+  };
+
+  const removeFromLineup = (uid: string) => {
+    setDraftExtras((prev) => prev.filter((p) => p.user_id !== uid));
+    setDraftBuckets((b) => {
+      const nb = { ...b };
+      delete nb[uid];
+      return nb;
+    });
   };
 
   const saveLineup = async () => {
     if (!match) return;
-    const groups: Record<Bucket, string[]> = { team_a: [], team_b: [], team_c: [], reserves: [] };
-    for (const [uid, bucket] of Object.entries(draftBuckets)) groups[bucket].push(uid);
+    const groups: Record<Bucket, any[]> = { team_a: [], team_b: [], team_c: [], reserves: [] };
+    const allPlayers = match.lineup
+      ? [...match.lineup.team_a, ...match.lineup.team_b, ...match.lineup.team_c, ...match.lineup.reserves]
+      : [];
+    const byId: Record<string, any> = {};
+    for (const p of allPlayers) byId[p.user_id] = p;
+    for (const p of draftExtras) byId[p.user_id] = p;
+
+    for (const [uid, bucket] of Object.entries(draftBuckets)) {
+      const src = byId[uid] as any;
+      if (!src) continue;
+      if (src.is_guest || uid.startsWith('guest:')) {
+        // Send as a guest ref; dropping synthetic id so server re-generates
+        groups[bucket].push({
+          name: src.guest_name || src.name,
+          shirt_number: src.guest_shirt ?? src.shirt_number ?? null,
+        });
+      } else {
+        groups[bucket].push(uid);
+      }
+    }
     setBusy(true);
     try {
       const updated = await api<Match>(`/matches/${match.id}/lineup`, { method: 'PUT', body: groups });
@@ -562,7 +640,7 @@ export default function MatchDetail() {
 
       {/* Lineup edit modal */}
       <Modal visible={lineupEditOpen} transparent animationType="slide" onRequestClose={() => setLineupEditOpen(false)}>
-        <View style={styles.modalBg}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalBg}>
           <View style={styles.modalCard}>
             <ScrollView showsVerticalScrollIndicator={false}>
               <View style={styles.modalHeader}>
@@ -571,11 +649,95 @@ export default function MatchDetail() {
                   <Ionicons name="close" size={24} color={colors.textSecondary} />
                 </TouchableOpacity>
               </View>
-              <Muted style={{ marginBottom: spacing.md, fontSize: 12 }}>
-                Tap a team pill to reassign each player. Red & Black max {match.team_size} each.
+
+              <View style={styles.addBtnRow}>
+                <TouchableOpacity
+                  testID="add-registered-btn"
+                  onPress={() => setAddPickerOpen((o) => !o)}
+                  style={styles.addBtn}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons name="person-add-outline" size={14} color={colors.primary} />
+                  <Text style={styles.addBtnText}>+ PLAYER</Text>
+                </TouchableOpacity>
+              </View>
+
+              {addPickerOpen && (
+                <View style={styles.pickerCard}>
+                  <Text style={styles.label}>PICK A REGISTERED USER</Text>
+                  {(() => {
+                    const inLineup = new Set(Object.keys(draftBuckets));
+                    const available = allUsers.filter((u) => !inLineup.has(u.id));
+                    if (available.length === 0) {
+                      return <Muted style={{ fontSize: 12 }}>Everyone is already in the lineup.</Muted>;
+                    }
+                    return available.map((u) => (
+                      <TouchableOpacity
+                        key={u.id}
+                        testID={`pick-user-${u.id}`}
+                        onPress={() => addRegisteredToLineup(u)}
+                        style={styles.pickerRow}
+                        activeOpacity={0.8}
+                      >
+                        <Avatar uri={u.profile_picture} size={30} name={u.name} shirt={u.shirt_number || undefined} />
+                        <Text style={styles.pickerName} numberOfLines={1}>{u.name}</Text>
+                        {u.preferred_position && (
+                          <View style={styles.posBadge}>
+                            <Text style={styles.posBadgeText}>{u.preferred_position}</Text>
+                          </View>
+                        )}
+                        <Ionicons name="add-circle" size={20} color={colors.primary} />
+                      </TouchableOpacity>
+                    ));
+                  })()}
+                </View>
+              )}
+
+              <View style={styles.guestCard}>
+                <Text style={styles.label}>+ ADD GUEST (NON-USER)</Text>
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  <TextInput
+                    testID="guest-name-input"
+                    value={guestName}
+                    onChangeText={setGuestName}
+                    placeholder="Guest name"
+                    placeholderTextColor={colors.textMuted}
+                    style={[styles.input, { flex: 1 }]}
+                  />
+                  <TextInput
+                    testID="guest-shirt-input"
+                    value={guestShirt}
+                    onChangeText={(t) => setGuestShirt(t.replace(/[^0-9]/g, '').slice(0, 2))}
+                    keyboardType="number-pad"
+                    placeholder="#"
+                    placeholderTextColor={colors.textMuted}
+                    style={[styles.input, { width: 60, textAlign: 'center' }]}
+                  />
+                  <TouchableOpacity
+                    testID="add-guest-btn"
+                    onPress={addGuestToLineup}
+                    style={styles.guestAddBtn}
+                    activeOpacity={0.85}
+                  >
+                    <Ionicons name="add" size={20} color="#fff" />
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              <Muted style={{ marginTop: spacing.md, marginBottom: spacing.sm, fontSize: 12 }}>
+                Tap a team pill to reassign. Red & Black max {match.team_size} each.
               </Muted>
-              {(match.lineup ? [...match.lineup.team_a, ...match.lineup.team_b, ...match.lineup.team_c, ...match.lineup.reserves] : []).map((p) => {
+
+              {(() => {
+                const existing = match.lineup
+                  ? [...match.lineup.team_a, ...match.lineup.team_b, ...match.lineup.team_c, ...match.lineup.reserves]
+                  : [];
+                const merged = [...existing, ...draftExtras];
+                // Only keep those still in draftBuckets (removals respected)
+                return merged.filter((p) => draftBuckets[p.user_id]);
+              })().map((p) => {
                 const current = draftBuckets[p.user_id] || 'reserves';
+                const isGuest = (p as any).is_guest || p.user_id.startsWith('guest:');
                 const teams: { key: Bucket; label: string; color: string; textColor?: string }[] = [
                   { key: 'team_a', label: 'RED', color: TEAM_COLORS.a.primary },
                   { key: 'team_b', label: 'BLACK', color: TEAM_COLORS.b.primary },
@@ -585,7 +747,14 @@ export default function MatchDetail() {
                 return (
                   <View key={p.user_id} style={styles.editRow}>
                     <Avatar uri={p.profile_picture} size={34} name={p.name} shirt={p.shirt_number || undefined} />
-                    <Text style={styles.editName} numberOfLines={1}>{p.name}</Text>
+                    <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                      <Text style={styles.editName} numberOfLines={1}>{p.name}</Text>
+                      {isGuest && (
+                        <View style={styles.guestBadge}>
+                          <Text style={styles.guestBadgeText}>GUEST</Text>
+                        </View>
+                      )}
+                    </View>
                     <View style={{ flexDirection: 'row', gap: 4 }}>
                       {teams.map((t) => {
                         const selected = current === t.key;
@@ -594,19 +763,21 @@ export default function MatchDetail() {
                             key={t.key}
                             testID={`assign-${p.user_id}-${t.key}`}
                             onPress={() => setDraftBuckets((b) => ({ ...b, [p.user_id]: t.key }))}
-                            style={[
-                              styles.pill,
-                              selected && { backgroundColor: t.color, borderColor: t.color },
-                            ]}
+                            style={[styles.pill, selected && { backgroundColor: t.color, borderColor: t.color }]}
                             activeOpacity={0.8}
                           >
-                            <Text style={[
-                              styles.pillText,
-                              selected && { color: t.textColor || '#fff' },
-                            ]}>{t.label}</Text>
+                            <Text style={[styles.pillText, selected && { color: t.textColor || '#fff' }]}>{t.label}</Text>
                           </TouchableOpacity>
                         );
                       })}
+                      <TouchableOpacity
+                        testID={`remove-${p.user_id}`}
+                        onPress={() => removeFromLineup(p.user_id)}
+                        style={styles.removeBtn}
+                        hitSlop={6}
+                      >
+                        <Ionicons name="close" size={14} color={colors.danger} />
+                      </TouchableOpacity>
                     </View>
                   </View>
                 );
@@ -618,7 +789,7 @@ export default function MatchDetail() {
               </TouchableOpacity>
             </ScrollView>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
     </SafeAreaView>
   );
@@ -722,4 +893,66 @@ const styles = StyleSheet.create({
   editName: { flex: 1, color: colors.textPrimary, fontWeight: '700', fontSize: 13 },
   pill: { paddingHorizontal: 8, height: 28, minWidth: 44, alignItems: 'center', justifyContent: 'center', borderRadius: 14, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.surfaceAccent },
   pillText: { color: colors.textSecondary, fontWeight: '900', fontSize: 10, letterSpacing: 1 },
+  addBtnRow: { flexDirection: 'row', gap: 8, marginBottom: spacing.sm },
+  addBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.primary,
+    backgroundColor: colors.surface,
+  },
+  addBtnText: { color: colors.primary, fontWeight: '900', fontSize: 11, letterSpacing: 1 },
+  pickerCard: {
+    marginBottom: spacing.sm,
+    padding: spacing.sm,
+    backgroundColor: colors.background,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    maxHeight: 240,
+  },
+  pickerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 4,
+  },
+  pickerName: { flex: 1, color: colors.textPrimary, fontWeight: '700', fontSize: 13 },
+  guestCard: {
+    marginBottom: spacing.sm,
+    padding: spacing.sm,
+    backgroundColor: colors.background,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  guestAddBtn: {
+    width: 48,
+    height: 48,
+    borderRadius: radii.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.primary,
+  },
+  guestBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+    backgroundColor: colors.warning,
+  },
+  guestBadgeText: { color: '#fff', fontSize: 9, fontWeight: '900', letterSpacing: 1 },
+  removeBtn: {
+    width: 24,
+    height: 28,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 4,
+    marginLeft: 2,
+  },
 });
