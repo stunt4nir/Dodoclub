@@ -101,3 +101,82 @@
 #====================================================================================================
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
+
+user_problem_statement: "Verify backend accepts and persists newly added player positions (CB/LB/RB/CDM/CM/CAM/LW/RW/ST) while preserving backward compatibility with legacy ones (GK/DEF/MID/FWD/ANY). Validate lineup algorithm distributes new positions into base buckets without coercing or crashing."
+
+backend:
+  - task: "Profile update accepts new positions (CB, LB, RB, CDM, CM, CAM, LW, RW, ST)"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: "Admin logged in, then PUT /api/users/me with each of CB, LB, RB, CDM, CM, CAM, LW, RW, ST — every update returned 200 and GET /api/auth/me returned the exact updated preferred_position. Note: review request mentioned PUT /api/auth/me but the actual implementation is PUT /api/users/me (PUT on /api/auth/me returns 405). Tested /users/me successfully."
+
+  - task: "Profile update rejects invalid preferred_position with 422"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: "PUT /api/users/me with preferred_position='XYZ' returned 422 validation error as expected (pydantic Literal enforcement)."
+
+  - task: "Profile update preserves backward compatibility with legacy positions (GK, DEF, MID, FWD, ANY)"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: "All five legacy positions accepted and persisted correctly via PUT /api/users/me."
+
+  - task: "Register user with new positions preserves preferred_position"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: "Registered 6 users (2xCB, 2xCAM, 2xST) via POST /api/auth/register. Each response carried the exact preferred_position supplied; no coercion."
+
+  - task: "Lineup generation smoke test with new positions (team_size=3, 7 yes voters)"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: "Created friendly match team_size=3, future date. Voted 'yes' for admin + 6 test users (7 total). POST /api/matches/{id}/generate-lineup returned 200 with team_a=3, team_b=3, team_c=0, reserves=1 (correct — capacity 6, 1 overflow). Every player's preferred_position preserved exactly (CB/CAM/ST/CAM-admin) — no coercion to ANY. Position bucket mapping (CB/LB/RB→DEF, CDM/CM/CAM→MID, LW/RW/ST→FWD) worked without errors."
+
+metadata:
+  created_by: "testing_agent"
+  version: "1.0"
+  test_sequence: 1
+  run_ui: false
+
+test_plan:
+  current_focus: []
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+    - agent: "testing"
+      message: "All 38 backend checks PASSED (see /app/backend_test.py). Positions work end-to-end: profile update, validation of bad values (422), backward compat, registration, and the lineup algorithm preserves exact preferred_position while bucketing specific roles (CB/LB/RB→DEF, CDM/CM/CAM→MID, LW/RW/ST→FWD) for balancing. One minor doc note: review request said PUT /api/auth/me for profile updates, but the actual endpoint is PUT /api/users/me — PUT on /api/auth/me returns 405. Consider aligning the docs (no code change required). No failures to action."

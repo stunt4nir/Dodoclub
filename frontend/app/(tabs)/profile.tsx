@@ -293,21 +293,32 @@ export default function ProfileScreen() {
           />
 
           <Text style={[styles.label, { marginTop: spacing.md }]}>PREFERRED POSITION</Text>
-          <View style={styles.chipRow}>
-            {(['GK', 'DEF', 'MID', 'FWD', 'ANY'] as const).map((p) => (
-              <TouchableOpacity
-                key={p}
-                testID={`position-${p}-btn`}
-                onPress={() => setPosition(p)}
-                activeOpacity={0.85}
-                style={[styles.posChip, position === p && styles.posChipActive]}
-              >
-                <Text style={[styles.posChipText, position === p && styles.posChipTextActive]}>
-                  {p}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
+          {([
+            { group: 'Goalkeeper', items: ['GK'] },
+            { group: 'Defenders', items: ['CB', 'LB', 'RB'] },
+            { group: 'Midfielders', items: ['CDM', 'CM', 'CAM'] },
+            { group: 'Attackers', items: ['LW', 'ST', 'RW'] },
+            { group: 'Flexible', items: ['ANY'] },
+          ] as const).map((section) => (
+            <View key={section.group} style={{ marginTop: 8 }}>
+              <Text style={styles.posGroupLabel}>{section.group}</Text>
+              <View style={styles.chipRow}>
+                {section.items.map((p) => (
+                  <TouchableOpacity
+                    key={p}
+                    testID={`position-${p}-btn`}
+                    onPress={() => setPosition(p as User['preferred_position'])}
+                    activeOpacity={0.85}
+                    style={[styles.posChip, position === p && styles.posChipActive]}
+                  >
+                    <Text style={[styles.posChipText, position === p && styles.posChipTextActive]}>
+                      {p}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          ))}
 
           <TouchableOpacity
             testID="save-profile-btn"
@@ -652,6 +663,14 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   posChipTextActive: { color: '#fff' },
+  posGroupLabel: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+    marginBottom: 6,
+    textTransform: 'uppercase',
+  },
   dangerBtn: {
     flexDirection: 'row',
     alignItems: 'center',

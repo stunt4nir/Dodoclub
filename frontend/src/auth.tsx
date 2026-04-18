@@ -7,7 +7,7 @@ export type User = {
   name: string;
   profile_picture: string | null;
   shirt_number: number | null;
-  preferred_position: 'GK' | 'DEF' | 'MID' | 'FWD' | 'ANY' | null;
+  preferred_position: 'GK' | 'CB' | 'LB' | 'RB' | 'CDM' | 'CM' | 'CAM' | 'LW' | 'RW' | 'ST' | 'DEF' | 'MID' | 'FWD' | 'ANY' | null;
   role: 'admin' | 'user';
   can_edit_matches: boolean;
   goals: number;

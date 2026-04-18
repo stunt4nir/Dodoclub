@@ -122,7 +122,10 @@ class RegisterIn(BaseModel):
     password: str = Field(min_length=6)
     name: str = Field(min_length=1, max_length=40)
     shirt_number: Optional[int] = Field(default=None, ge=1, le=99)
-    preferred_position: Optional[Literal["GK", "DEF", "MID", "FWD", "ANY"]] = None
+    preferred_position: Optional[Literal[
+        "GK", "CB", "LB", "RB", "CDM", "CM", "CAM", "LW", "RW", "ST",
+        "DEF", "MID", "FWD", "ANY"
+    ]] = None
 
 
 class LoginIn(BaseModel):
@@ -134,7 +137,10 @@ class ProfileUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=40)
     profile_picture: Optional[str] = None  # base64
     shirt_number: Optional[int] = Field(default=None, ge=1, le=99)
-    preferred_position: Optional[Literal["GK", "DEF", "MID", "FWD", "ANY"]] = None
+    preferred_position: Optional[Literal[
+        "GK", "CB", "LB", "RB", "CDM", "CM", "CAM", "LW", "RW", "ST",
+        "DEF", "MID", "FWD", "ANY"
+    ]] = None
 
 
 class MatchCreate(BaseModel):
@@ -517,9 +523,18 @@ def _build_lineup(
 
     position_order = ["GK", "DEF", "MID", "FWD", "ANY"]
 
+    # Map specific positions (CB/CDM/ST/etc) to base buckets used for balancing
+    position_bucket_map = {
+        "GK": "GK",
+        "CB": "DEF", "LB": "DEF", "RB": "DEF", "DEF": "DEF",
+        "CDM": "MID", "CM": "MID", "CAM": "MID", "MID": "MID",
+        "LW": "FWD", "RW": "FWD", "ST": "FWD", "FWD": "FWD",
+        "ANY": "ANY",
+    }
+
     def get_pos(p: dict) -> str:
         v = p.get("preferred_position")
-        return v if v in position_order else "ANY"
+        return position_bucket_map.get(v, "ANY")
 
     buckets: dict = {p: [] for p in position_order}
     for p in yes_voters:
