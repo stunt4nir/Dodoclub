@@ -147,6 +147,10 @@ export default function SquadScreen() {
         data={sorted}
         keyExtractor={(p) => p.id}
         contentContainerStyle={styles.list}
+        initialNumToRender={12}
+        maxToRenderPerBatch={10}
+        windowSize={7}
+        removeClippedSubviews
         refreshControl={
           <RefreshControl
             refreshing={refreshing}

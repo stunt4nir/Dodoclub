@@ -221,6 +221,10 @@ export default function MatchesScreen() {
         data={matches}
         keyExtractor={(m) => m.id}
         contentContainerStyle={styles.list}
+        initialNumToRender={8}
+        maxToRenderPerBatch={6}
+        windowSize={7}
+        removeClippedSubviews
         refreshControl={
           <RefreshControl
             refreshing={refreshing}

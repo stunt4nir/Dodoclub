@@ -14,6 +14,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
+import * as ImageManipulator from 'expo-image-manipulator';
 import { Ionicons } from '@expo/vector-icons';
 import { api } from '../../src/api';
 import { useAuth, User } from '../../src/auth';
@@ -33,13 +34,30 @@ async function pickImage(): Promise<string | null> {
     mediaTypes: ['images'],
     allowsEditing: true,
     aspect: [1, 1],
-    quality: 0.4,
-    base64: true,
+    quality: 1, // we re-compress below; keep source high so resize has headroom
   });
   if (pick.canceled) return null;
   const a = pick.assets[0];
-  if (a.base64) return `data:image/jpeg;base64,${a.base64}`;
-  return a.uri || null;
+  if (!a.uri) return null;
+  try {
+    // Resize to max 400x400 + JPEG 60% quality → typically 20-40 KB base64.
+    // Cuts /users & /matches payloads dramatically (base64 previously ran into
+    // hundreds of KB per user).
+    const out = await ImageManipulator.manipulateAsync(
+      a.uri,
+      [{ resize: { width: 400 } }],
+      {
+        compress: 0.6,
+        format: ImageManipulator.SaveFormat.JPEG,
+        base64: true,
+      }
+    );
+    if (out.base64) return `data:image/jpeg;base64,${out.base64}`;
+    return out.uri;
+  } catch {
+    // Fallback: return the raw asset if manipulator fails for any reason.
+    return a.uri;
+  }
 }
 
 export default function ProfileScreen() {
