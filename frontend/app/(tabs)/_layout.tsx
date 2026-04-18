@@ -24,7 +24,7 @@ export default function TabsLayout() {
   // the icons sit visually higher while the bar itself remains glued to the
   // bottom.
   const bottomInset = insets.bottom;
-  const LIFT_DP = 75; // ≈ 2 cm
+  const LIFT_DP = 150; // ≈ 4 cm — two cumulative lifts of 2 cm
   const ANDROID_FLOOR = 0;
   const nativeExtra = Platform.OS === 'android' ? Math.max(ANDROID_FLOOR, bottomInset) : bottomInset;
   const extraBottom = nativeExtra + LIFT_DP;
