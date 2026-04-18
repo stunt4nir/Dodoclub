@@ -207,8 +207,8 @@ export default function ProfileScreen() {
 
   const resetMatches = () => {
     Alert.alert(
-      'Reset matches only?',
-      'Deletes every match (fixtures + history + votes). Players and their career stats are preserved.',
+      'Delete all matches?',
+      'Deletes every match (fixtures + history + votes + chat). Players and their career stats are preserved.',
       [
         { text: 'Cancel', style: 'cancel' },
         {
@@ -222,6 +222,33 @@ export default function ProfileScreen() {
               );
               await load();
               Alert.alert('Done', `Deleted ${res.matches_deleted} match(es).`);
+            } catch (e: any) {
+              Alert.alert('Error', e.message || 'Failed');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const resetPlayers = () => {
+    Alert.alert(
+      'Delete all players?',
+      'Removes every non-admin player from the squad. Their votes, lineup slots, and chat messages are scrubbed from every match. Matches and league standings are kept. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete all players',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const res = await api<{ users_deleted: number }>(
+                '/admin/reset/players',
+                { method: 'POST' }
+              );
+              await refresh();
+              await load();
+              Alert.alert('Done', `Removed ${res.users_deleted} player(s).`);
             } catch (e: any) {
               Alert.alert('Error', e.message || 'Failed');
             }
@@ -506,10 +533,28 @@ export default function ProfileScreen() {
               <Ionicons name="calendar-clear-outline" size={18} color={colors.warning} />
               <View style={{ flex: 1 }}>
                 <Text style={[styles.dangerTitle, { color: colors.warning }]}>
-                  RESET MATCHES ONLY
+                  DELETE ALL MATCHES
                 </Text>
                 <Text style={styles.dangerSub}>
-                  Wipes fixtures & history. Keeps players & career stats.
+                  Wipes fixtures & history & chat. Keeps players & career stats.
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={colors.warning} />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              testID="reset-players-btn"
+              onPress={resetPlayers}
+              style={[styles.dangerBtn, { borderColor: colors.warning, marginBottom: spacing.sm }]}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="people-outline" size={18} color={colors.warning} />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.dangerTitle, { color: colors.warning }]}>
+                  DELETE ALL PLAYERS
+                </Text>
+                <Text style={styles.dangerSub}>
+                  Removes every non-admin player. Matches & standings kept.
                 </Text>
               </View>
               <Ionicons name="chevron-forward" size={18} color={colors.warning} />

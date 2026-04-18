@@ -1076,6 +1076,47 @@ async def admin_reset_matches(admin=Depends(require_admin)):
     return {"ok": True, "matches_deleted": res.deleted_count}
 
 
+@api.post("/admin/reset/players")
+async def admin_reset_players(admin=Depends(require_admin)):
+    """Delete every non-admin player at once. Matches are preserved — but any
+    references to deleted users (votes, lineup slots, chat messages) are
+    cleaned up so the UI doesn't render orphaned ghost entries."""
+    # Find all non-admin users first so we know which refs to scrub
+    non_admins = await db.users.find(
+        {"role": {"$ne": "admin"}}, {"_id": 0, "id": 1}
+    ).to_list(length=None)
+    ids = {u["id"] for u in non_admins}
+
+    # Scrub match votes + lineup slots in bulk
+    async for m in db.matches.find({}, {"_id": 0}):
+        changed = False
+        votes = m.get("votes", {}) or {}
+        for uid in list(votes.keys()):
+            if uid in ids:
+                votes.pop(uid, None)
+                changed = True
+        lineup = m.get("lineup")
+        if isinstance(lineup, dict):
+            for k in ("team_a", "team_b", "team_c", "reserves"):
+                arr = lineup.get(k) or []
+                new_arr = [p for p in arr if (p or {}).get("user_id") not in ids]
+                if len(new_arr) != len(arr):
+                    lineup[k] = new_arr
+                    changed = True
+        if changed:
+            await db.matches.update_one(
+                {"id": m["id"]},
+                {"$set": {"votes": votes, "lineup": lineup}},
+            )
+
+    # Wipe every comment by non-admin users
+    if ids:
+        await db.match_comments.delete_many({"user_id": {"$in": list(ids)}})
+
+    res = await db.users.delete_many({"role": {"$ne": "admin"}})
+    return {"ok": True, "users_deleted": res.deleted_count}
+
+
 @api.post("/admin/reset/league")
 async def admin_reset_league(admin=Depends(require_admin)):
     """Zero out league standings (wins, draws, losses, league_points) for all
