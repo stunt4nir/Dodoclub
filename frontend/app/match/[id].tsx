@@ -956,4 +956,14 @@ const styles = StyleSheet.create({
     borderRadius: 4,
     marginLeft: 2,
   },
+  input: {
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.md,
+    paddingHorizontal: spacing.md,
+    height: 48,
+    color: colors.textPrimary,
+    fontSize: 16,
+  },
 });
