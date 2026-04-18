@@ -588,7 +588,7 @@ const styles = StyleSheet.create({
   },
   list: {
     paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.xxl,
+    paddingBottom: 220,
     gap: spacing.sm,
   },
   cardWrap: { position: 'relative' },

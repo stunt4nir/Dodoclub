@@ -604,7 +604,9 @@ const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.background },
   scroll: {
     paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.xxl,
+    // Big bottom padding so the last item (Danger Zone) clears the lifted
+    // tab bar on Android (tab bar ≈ 50 + LIFT 150 ≈ 200 dp tall + safe inset).
+    paddingBottom: 220,
     paddingTop: spacing.md,
   },
   headerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: spacing.md },
