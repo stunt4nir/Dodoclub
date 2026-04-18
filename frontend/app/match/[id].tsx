@@ -152,6 +152,20 @@ export default function MatchDetail() {
   const [guestName, setGuestName] = useState('');
   const [guestShirt, setGuestShirt] = useState('');
 
+  // Chat state
+  type Comment = {
+    id: string;
+    match_id: string;
+    user_id: string;
+    name: string | null;
+    profile_picture: string | null;
+    text: string;
+    created_at: string;
+  };
+  const [comments, setComments] = useState<Comment[]>([]);
+  const [commentDraft, setCommentDraft] = useState('');
+  const [postingComment, setPostingComment] = useState(false);
+
   const load = useCallback(async () => {
     if (!id) return;
     try {
@@ -162,6 +176,65 @@ export default function MatchDetail() {
   }, [id]);
 
   useFocusEffect(useCallback(() => { load(); }, [load]));
+
+  // Chat: load comments + poll
+  const loadComments = useCallback(async () => {
+    if (!id) return;
+    try {
+      const list = await api<Comment[]>(`/matches/${id}/comments`);
+      setComments(list);
+    } catch {
+      /* ignore */
+    }
+  }, [id]);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadComments();
+      const t = setInterval(loadComments, 8000);
+      return () => clearInterval(t);
+    }, [loadComments])
+  );
+
+  const postComment = async () => {
+    const txt = commentDraft.trim();
+    if (!txt) return;
+    if (txt.length > 500) {
+      Alert.alert('Too long', 'Max 500 characters.');
+      return;
+    }
+    setPostingComment(true);
+    try {
+      await api(`/matches/${id}/comments`, {
+        method: 'POST',
+        body: { text: txt },
+      });
+      setCommentDraft('');
+      await loadComments();
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Failed to post');
+    } finally {
+      setPostingComment(false);
+    }
+  };
+
+  const deleteComment = async (cid: string) => {
+    Alert.alert('Delete message?', 'This cannot be undone.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: async () => {
+          try {
+            await api(`/matches/${id}/comments/${cid}`, { method: 'DELETE' });
+            setComments((prev) => prev.filter((c) => c.id !== cid));
+          } catch (e: any) {
+            Alert.alert('Error', e.message || 'Delete failed');
+          }
+        },
+      },
+    ]);
+  };
 
   // live timer tick
   useEffect(() => {
@@ -571,6 +644,94 @@ export default function MatchDetail() {
             <Text style={styles.secondaryBtnText}>{match.result ? 'EDIT RESULT' : 'RECORD RESULT'}</Text>
           </TouchableOpacity>
         )}
+
+        {/* ----------- Match Chat ----------- */}
+        <View style={styles.chatSection}>
+          <View style={styles.chatHeader}>
+            <Ionicons name="chatbubbles" size={18} color={colors.primary} />
+            <Text style={styles.chatTitle}>MATCH CHAT</Text>
+            <Text style={styles.chatCount}>{comments.length}</Text>
+          </View>
+
+          {comments.length === 0 ? (
+            <Muted style={{ textAlign: 'center', paddingVertical: spacing.md }}>
+              No messages yet. Be the first to post!
+            </Muted>
+          ) : (
+            comments.map((c) => {
+              const mine = user?.id === c.user_id;
+              const canDelete = mine || canEdit;
+              const when = (() => {
+                try {
+                  const d = new Date(c.created_at);
+                  return d.toLocaleString(undefined, {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    month: 'short',
+                    day: 'numeric',
+                  });
+                } catch { return ''; }
+              })();
+              return (
+                <View
+                  key={c.id}
+                  testID={`comment-${c.id}`}
+                  style={[styles.chatBubble, mine && styles.chatBubbleMine]}
+                >
+                  <Avatar uri={c.profile_picture} size={32} name={c.name || '?'} />
+                  <View style={{ flex: 1, marginLeft: 10 }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                      <Text style={styles.chatName} numberOfLines={1}>
+                        {c.name || 'Unknown'}{mine ? ' (you)' : ''}
+                      </Text>
+                      <Text style={styles.chatTime}>{when}</Text>
+                    </View>
+                    <Text style={styles.chatText}>{c.text}</Text>
+                  </View>
+                  {canDelete && (
+                    <TouchableOpacity
+                      testID={`comment-delete-${c.id}`}
+                      onPress={() => deleteComment(c.id)}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                      style={{ padding: 4 }}
+                    >
+                      <Ionicons name="trash-outline" size={16} color={colors.textMuted} />
+                    </TouchableOpacity>
+                  )}
+                </View>
+              );
+            })
+          )}
+
+          {user && (
+            <View style={styles.chatInputRow}>
+              <TextInput
+                testID="chat-input"
+                value={commentDraft}
+                onChangeText={setCommentDraft}
+                placeholder="Write a message…"
+                placeholderTextColor={colors.textMuted}
+                multiline
+                maxLength={500}
+                style={styles.chatInput}
+              />
+              <TouchableOpacity
+                testID="chat-send-btn"
+                onPress={postComment}
+                disabled={postingComment || !commentDraft.trim()}
+                style={[
+                  styles.chatSendBtn,
+                  (postingComment || !commentDraft.trim()) && { opacity: 0.5 },
+                ]}
+                activeOpacity={0.85}
+              >
+                {postingComment
+                  ? <ActivityIndicator color="#fff" size="small" />
+                  : <Ionicons name="send" size={18} color="#fff" />}
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
       </ScrollView>
 
       {/* Result modal — with steppers */}
@@ -1014,5 +1175,90 @@ const styles = StyleSheet.create({
     height: 48,
     color: colors.textPrimary,
     fontSize: 16,
+  },
+
+  // Match Chat
+  chatSection: {
+    marginTop: spacing.lg,
+    padding: spacing.md,
+    backgroundColor: colors.surface,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  chatHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: spacing.sm,
+  },
+  chatTitle: {
+    color: colors.textPrimary,
+    fontWeight: '900',
+    letterSpacing: 1.2,
+    fontSize: 13,
+  },
+  chatCount: {
+    marginLeft: 'auto',
+    color: colors.textMuted,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  chatBubble: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: colors.background,
+    borderRadius: radii.md,
+    padding: spacing.sm,
+    marginBottom: spacing.xs,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  chatBubbleMine: {
+    borderColor: colors.primary + '66',
+    backgroundColor: '#1f1105',
+  },
+  chatName: {
+    color: colors.textPrimary,
+    fontWeight: '700',
+    fontSize: 13,
+    flexShrink: 1,
+  },
+  chatTime: {
+    color: colors.textMuted,
+    fontSize: 11,
+  },
+  chatText: {
+    color: colors.textPrimary,
+    fontSize: 14,
+    marginTop: 2,
+    lineHeight: 19,
+  },
+  chatInputRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 8,
+    marginTop: spacing.sm,
+  },
+  chatInput: {
+    flex: 1,
+    minHeight: 44,
+    maxHeight: 120,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 10,
+    backgroundColor: colors.background,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.md,
+    color: colors.textPrimary,
+    fontSize: 15,
+  },
+  chatSendBtn: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

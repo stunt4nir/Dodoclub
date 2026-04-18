@@ -179,8 +179,8 @@ backend:
 
 metadata:
   created_by: "testing_agent"
-  version: "1.1"
-  test_sequence: 2
+  version: "1.2"
+  test_sequence: 3
   run_ui: false
 
 test_plan:
@@ -194,3 +194,5 @@ agent_communication:
       message: "All 38 backend checks PASSED (see /app/backend_test.py). Positions work end-to-end: profile update, validation of bad values (422), backward compat, registration, and the lineup algorithm preserves exact preferred_position while bucketing specific roles (CB/LB/RB→DEF, CDM/CM/CAM→MID, LW/RW/ST→FWD) for balancing. One minor doc note: review request said PUT /api/auth/me for profile updates, but the actual endpoint is PUT /api/users/me — PUT on /api/auth/me returns 405. Consider aligning the docs (no code change required). No failures to action."
     - agent: "testing"
       message: "Multi-position feature (preferred_positions, max 2) verified end-to-end. 18/18 checks PASS. Covered: admin login, 2-item list, 1-item list, empty list clear, >2 items 422, legacy singular backward-compat (auto-syncs list), register with preferred_positions (response + persistence after re-login), lineup smoke with 6 varied users + admin voting yes (generate-lineup 200, arrays preserved, primary==list[0]), and GET /matches/{id} votes include BOTH fields. user_public() and _match_public() serialise preferred_position + preferred_positions correctly. No 500s. No regressions in prior single-position behaviour. Nothing to fix — main agent can summarise and finish."
+    - agent: "testing"
+      message: "team_size validation + Match Comments CRUD + cascade delete — 28/28 PASS (see /app/backend_test.py). Summary: (A) POST /api/matches with team_size=3 returns 422 (ge=4 enforced), team_size=4 and team_size=11 succeed with correct persisted value, team_size=12 returns 422. (B) GET /matches/{id}/comments empty returns []; POST as admin returns full comment object (id, user_id==admin.id, name, profile_picture, text, created_at); GET lists 1 item; registered regular user posts and GET returns 2 items sorted oldest-first (admin first). Validation: empty text 422, 501-chars 422, 500-chars 200. Authorization: regular user DELETE of admin's comment 403; own-delete 200; admin-delete remaining 200. Non-existent match id 404 on GET/POST/DELETE. Missing Authorization header 401 on all three endpoints. (C) Match delete cascades: after DELETE /api/matches/{id}, GET /matches/{id}/comments returns 404 (match gone), confirming comments are implicitly unreachable; code also calls match_comments.delete_many({match_id}) on delete. Nothing to fix."

@@ -125,8 +125,8 @@ export default function MatchesScreen() {
       return;
     }
     const ts = parseInt(teamSize, 10);
-    if (!Number.isFinite(ts) || ts < 3 || ts > 11) {
-      Alert.alert('Invalid team size', 'Choose between 3 and 11.');
+    if (!Number.isFinite(ts) || ts < 4 || ts > 11) {
+      Alert.alert('Invalid team size', 'Choose between 4 and 11.');
       return;
     }
     const h = parseInt(hour, 10);
@@ -370,7 +370,7 @@ export default function MatchesScreen() {
 
               <Text style={[styles.label, { marginTop: spacing.md }]}>TEAM SIZE</Text>
               <View style={styles.row}>
-                {[3, 5, 6, 7, 8, 9, 11].map((n) => (
+                {[4, 5, 6, 7, 8, 9, 11].map((n) => (
                   <TouchableOpacity
                     key={n}
                     testID={`team-size-${n}-btn`}
@@ -424,11 +424,13 @@ export default function MatchesScreen() {
                 </>
               )}
 
-              <Text style={[styles.label, { marginTop: spacing.md }]}>DATE</Text>
+              <Text style={[styles.label, { marginTop: spacing.md }]}>DATE (next 7 days)</Text>
               <View style={styles.row}>
-                {[0, 1, 2, 3, 5, 7, 14].map((n) => {
+                {[0, 1, 2, 3, 4, 5, 6].map((n) => {
                   const d = todayPlusDays(n);
-                  const short = n === 0 ? 'Today' : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+                  const short = n === 0
+                    ? 'Today'
+                    : d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' });
                   return (
                     <TouchableOpacity
                       key={n}

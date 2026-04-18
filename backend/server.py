@@ -155,7 +155,7 @@ class MatchCreate(BaseModel):
     title: str = Field(min_length=1, max_length=80)
     date: str  # ISO datetime
     location: Optional[str] = Field(default=None, max_length=120)
-    team_size: int = Field(default=5, ge=3, le=11)
+    team_size: int = Field(default=5, ge=4, le=11)
     match_type: Literal["friendly", "league"] = "friendly"
     third_team_enabled: bool = False
     duration_minutes: int = Field(default=60, ge=10, le=180)
@@ -210,6 +210,10 @@ class GrantEditIn(BaseModel):
     can_edit_matches: bool
 
 
+class CommentIn(BaseModel):
+    text: str = Field(min_length=1, max_length=500)
+
+
 # ---------- Startup ----------
 @app.on_event("startup")
 async def startup():
@@ -218,6 +222,7 @@ async def startup():
     await db.matches.create_index("id", unique=True)
     await db.password_reset_tokens.create_index("expires_at", expireAfterSeconds=0)
     await db.password_reset_tokens.create_index("email")
+    await db.match_comments.create_index([("match_id", 1), ("created_at", 1)])
     # Seed admin
     admin_email = os.environ["ADMIN_EMAIL"].lower()
     admin_password = os.environ["ADMIN_PASSWORD"]
@@ -926,6 +931,60 @@ async def delete_match(mid: str, user=Depends(require_editor)):
                 uids = prev.get("team_rosters", {}).get(team_key, [])
                 await _apply_league_delta(uids, outcome, sign=-1)
     await db.matches.delete_one({"id": mid})
+    await db.match_comments.delete_many({"match_id": mid})
+    return {"ok": True}
+
+
+# ---------- Match Comments (chat) ----------
+def _comment_public(c: dict) -> dict:
+    return {
+        "id": c["id"],
+        "match_id": c["match_id"],
+        "user_id": c["user_id"],
+        "name": c.get("name"),
+        "profile_picture": c.get("profile_picture"),
+        "text": c.get("text", ""),
+        "created_at": c.get("created_at"),
+    }
+
+
+@api.get("/matches/{mid}/comments")
+async def list_comments(mid: str, user=Depends(get_current_user)):
+    m = await db.matches.find_one({"id": mid}, {"_id": 0})
+    if not m:
+        raise HTTPException(404, "Match not found")
+    cur = db.match_comments.find({"match_id": mid}, {"_id": 0}).sort("created_at", 1)
+    items = [c async for c in cur]
+    return [_comment_public(c) for c in items]
+
+
+@api.post("/matches/{mid}/comments")
+async def add_comment(mid: str, data: CommentIn, user=Depends(get_current_user)):
+    m = await db.matches.find_one({"id": mid}, {"_id": 0})
+    if not m:
+        raise HTTPException(404, "Match not found")
+    doc = {
+        "id": str(uuid.uuid4()),
+        "match_id": mid,
+        "user_id": user["id"],
+        "name": user.get("name"),
+        "profile_picture": user.get("profile_picture"),
+        "text": data.text.strip(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.match_comments.insert_one(doc)
+    return _comment_public(doc)
+
+
+@api.delete("/matches/{mid}/comments/{cid}")
+async def delete_comment(mid: str, cid: str, user=Depends(get_current_user)):
+    c = await db.match_comments.find_one({"id": cid, "match_id": mid}, {"_id": 0})
+    if not c:
+        raise HTTPException(404, "Comment not found")
+    # Author, admin, or editor may delete
+    if c["user_id"] != user["id"] and user.get("role") != "admin" and not user.get("can_edit_matches", False):
+        raise HTTPException(403, "Not allowed to delete this comment")
+    await db.match_comments.delete_one({"id": cid})
     return {"ok": True}
 
 
@@ -935,6 +994,7 @@ async def admin_reset(admin=Depends(require_admin)):
     The seeded admin, club config, and reset tokens are preserved (tokens expire)."""
     matches_deleted = await db.matches.delete_many({})
     users_deleted = await db.users.delete_many({"role": {"$ne": "admin"}})
+    await db.match_comments.delete_many({})
     await db.users.update_many(
         {"role": "admin"},
         {
@@ -961,6 +1021,7 @@ async def admin_reset_matches(admin=Depends(require_admin)):
     """Delete every match (history + fixtures + votes), but keep all players
     and their career stats untouched."""
     res = await db.matches.delete_many({})
+    await db.match_comments.delete_many({})
     return {"ok": True, "matches_deleted": res.deleted_count}
 
 
