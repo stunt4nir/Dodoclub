@@ -19,11 +19,10 @@ export default function TabsLayout() {
   }
   if (!user) return <Redirect href="/(auth)/login" />;
 
-  // User request: push the tab icons further up the screen, clear of Samsung
-  // gesture pill. Larger paddingBottom pushes icons toward the top of the tab bar.
+  // User request: push tab icons significantly higher up the screen.
   const bottomInset = insets.bottom;
-  const ANDROID_FLOOR = 260; // ≈ 4 cm of clearance in dp
-  const extraBottom = Platform.OS === 'android' ? Math.max(ANDROID_FLOOR, bottomInset + 160) : bottomInset;
+  const ANDROID_FLOOR = 340; // ≈ 5+ cm of clearance in dp
+  const extraBottom = Platform.OS === 'android' ? Math.max(ANDROID_FLOOR, bottomInset + 220) : bottomInset;
   const tabBarHeight = 60 + extraBottom;
   const tabBarPaddingBottom = Math.max(10, extraBottom);
 
