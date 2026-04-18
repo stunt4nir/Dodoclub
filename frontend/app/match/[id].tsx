@@ -707,18 +707,20 @@ export default function MatchDetail() {
                     autoComplete="off"
                     autoCorrect={false}
                     importantForAutofill="no"
-                    selectionColor="#FFFF00"
+                    keyboardType="visible-password"
+                    secureTextEntry={false}
+                    spellCheck={false}
+                    selectionColor="#FF4500"
                     style={{
                       flex: 1,
                       backgroundColor: '#000000',
-                      borderWidth: 2,
-                      borderColor: '#FFFF00',
+                      borderWidth: 1,
+                      borderColor: colors.border,
                       borderRadius: radii.md,
                       paddingHorizontal: spacing.md,
                       height: 48,
-                      color: '#FFFF00',
-                      fontSize: 18,
-                      fontWeight: '900',
+                      color: '#FFFFFF',
+                      fontSize: 16,
                     }}
                   />
                   <TextInput
@@ -732,18 +734,18 @@ export default function MatchDetail() {
                     autoComplete="off"
                     autoCorrect={false}
                     importantForAutofill="no"
-                    selectionColor="#FFFF00"
+                    spellCheck={false}
+                    selectionColor="#FF4500"
                     style={{
                       width: 60,
                       backgroundColor: '#000000',
-                      borderWidth: 2,
-                      borderColor: '#FFFF00',
+                      borderWidth: 1,
+                      borderColor: colors.border,
                       borderRadius: radii.md,
                       paddingHorizontal: spacing.md,
                       height: 48,
-                      color: '#FFFF00',
-                      fontSize: 18,
-                      fontWeight: '900',
+                      color: '#FFFFFF',
+                      fontSize: 16,
                       textAlign: 'center',
                     }}
                   />
