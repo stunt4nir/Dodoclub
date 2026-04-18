@@ -703,7 +703,7 @@ export default function MatchDetail() {
                     onChangeText={setGuestName}
                     placeholder="Guest name"
                     placeholderTextColor={colors.textMuted}
-                    style={[styles.input, { flex: 1 }]}
+                    style={[styles.input, { flex: 1, color: '#FFFFFF' }]}
                   />
                   <TextInput
                     testID="guest-shirt-input"
@@ -712,7 +712,7 @@ export default function MatchDetail() {
                     keyboardType="number-pad"
                     placeholder="#"
                     placeholderTextColor={colors.textMuted}
-                    style={[styles.input, { width: 60, textAlign: 'center' }]}
+                    style={[styles.input, { width: 60, textAlign: 'center', color: '#FFFFFF' }]}
                   />
                   <TouchableOpacity
                     testID="add-guest-btn"
