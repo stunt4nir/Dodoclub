@@ -20,12 +20,12 @@ export default function TabsLayout() {
   if (!user) return <Redirect href="/(auth)/login" />;
 
   // Edge-to-edge is disabled in app.json so the system nav bar already reserves
-  // its own space. Modest extra padding only.
+  // its own space. Minimal extra padding to keep tab bar close to system bar.
   const bottomInset = insets.bottom;
-  const ANDROID_FLOOR = 12;
+  const ANDROID_FLOOR = 0;
   const extraBottom = Platform.OS === 'android' ? Math.max(ANDROID_FLOOR, bottomInset) : bottomInset;
-  const tabBarHeight = 72 + extraBottom;
-  const tabBarPaddingBottom = Math.max(6, extraBottom);
+  const tabBarHeight = 64 + extraBottom;
+  const tabBarPaddingBottom = Math.max(4, extraBottom);
 
   const ICON_SIZE = 32;
 
