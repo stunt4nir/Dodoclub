@@ -19,12 +19,12 @@ export default function TabsLayout() {
   }
   if (!user) return <Redirect href="/(auth)/login" />;
 
-  // Respect Android nav / iOS home indicator so tab bar doesn't sit under system keys.
-  // Samsung One UI (S23/S24/S25 etc.) under-reports the gesture-bar inset, so
-  // we enforce a generous floor on Android.
+  // Samsung S25 Ultra + One UI gesture pill needs significant clearance.
+  // edgeToEdgeEnabled=true means we draw under the system bar so we must
+  // manually reserve plenty of bottom padding.
   const bottomInset = insets.bottom;
-  const ANDROID_FLOOR = 56; // enough clearance for Samsung gesture pill / 3-button nav
-  const extraBottom = Platform.OS === 'android' ? Math.max(ANDROID_FLOOR, bottomInset) : bottomInset;
+  const ANDROID_FLOOR = 80; // tuned for Samsung flagship gesture pill
+  const extraBottom = Platform.OS === 'android' ? Math.max(ANDROID_FLOOR, bottomInset + 32) : bottomInset;
   const tabBarHeight = 60 + extraBottom;
   const tabBarPaddingBottom = Math.max(10, extraBottom);
 
