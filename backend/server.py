@@ -313,13 +313,20 @@ async def me(user=Depends(get_current_user)):
 @api.post("/auth/forgot-password")
 async def forgot_password(data: ForgotPasswordIn):
     """Generate a 6-digit reset code, store a salted hash, and only return the
-    plaintext code when the server is in DEV_MODE. In production, the code is
-    generated silently — an email/SMS service must deliver it. The response
-    intentionally stays identical regardless of whether the email exists so
-    attackers can't enumerate registered users."""
+    plaintext code when the server is in DEV_MODE **and not deployed to the
+    emergent.host production domain**. The URL check is a defence-in-depth
+    guard so that if `DEV_MODE=1` accidentally leaks into prod env vars, the
+    code is still never returned to anonymous callers. In production, the
+    code must be delivered via email/SMS (TODO)."""
     import secrets
     import os
-    dev_mode = os.getenv("DEV_MODE", "0").lower() in ("1", "true", "yes")
+    dev_mode_flag = os.getenv("DEV_MODE", "0").lower() in ("1", "true", "yes")
+    app_url = (os.getenv("APP_URL") or "").lower()
+    is_prod_host = any(
+        marker in app_url
+        for marker in ("emergent.host", "emergentagent.com/deploy", ".clubdodo.")
+    )
+    dev_mode = dev_mode_flag and not is_prod_host
     email = data.email.lower()
     u = await db.users.find_one({"email": email}, {"_id": 0})
     # Clean up expired tokens for this email to avoid collisions
