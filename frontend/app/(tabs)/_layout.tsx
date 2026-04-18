@@ -20,13 +20,12 @@ export default function TabsLayout() {
   if (!user) return <Redirect href="/(auth)/login" />;
 
   // Edge-to-edge is disabled in app.json so the system nav bar already reserves
-  // its own space. We only need a modest extra margin. Keep a healthy floor for
-  // Samsung devices where inset reporting is inconsistent on Expo Go.
+  // its own space. Modest extra padding only.
   const bottomInset = insets.bottom;
-  const ANDROID_FLOOR = 40;
-  const extraBottom = Platform.OS === 'android' ? Math.max(ANDROID_FLOOR, bottomInset + 16) : bottomInset;
-  const tabBarHeight = 80 + extraBottom;
-  const tabBarPaddingBottom = Math.max(10, extraBottom);
+  const ANDROID_FLOOR = 12;
+  const extraBottom = Platform.OS === 'android' ? Math.max(ANDROID_FLOOR, bottomInset) : bottomInset;
+  const tabBarHeight = 72 + extraBottom;
+  const tabBarPaddingBottom = Math.max(6, extraBottom);
 
   const ICON_SIZE = 32;
 
