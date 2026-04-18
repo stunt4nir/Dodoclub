@@ -1,12 +1,14 @@
 import React from 'react';
 import { Tabs, Redirect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { View, ActivityIndicator } from 'react-native';
+import { View, ActivityIndicator, Platform } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../../src/auth';
 import { colors } from '../../src/theme';
 
 export default function TabsLayout() {
   const { user, loading } = useAuth();
+  const insets = useSafeAreaInsets();
 
   if (loading) {
     return (
@@ -17,6 +19,12 @@ export default function TabsLayout() {
   }
   if (!user) return <Redirect href="/(auth)/login" />;
 
+  // Respect Android nav / iOS home indicator so tab bar doesn't sit under system keys
+  const bottomInset = insets.bottom;
+  const extraAndroid = Platform.OS === 'android' ? 8 : 0;
+  const tabBarHeight = 60 + bottomInset + extraAndroid;
+  const tabBarPaddingBottom = Math.max(10, bottomInset) + extraAndroid;
+
   return (
     <Tabs
       screenOptions={{
@@ -25,8 +33,8 @@ export default function TabsLayout() {
           backgroundColor: colors.surface,
           borderTopColor: colors.border,
           borderTopWidth: 1,
-          height: 68,
-          paddingBottom: 10,
+          height: tabBarHeight,
+          paddingBottom: tabBarPaddingBottom,
           paddingTop: 6,
         },
         tabBarActiveTintColor: colors.primary,
