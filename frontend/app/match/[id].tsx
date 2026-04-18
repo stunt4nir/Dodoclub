@@ -704,6 +704,10 @@ export default function MatchDetail() {
                     placeholder="Guest name"
                     placeholderTextColor={colors.textMuted}
                     underlineColorAndroid="transparent"
+                    autoComplete="off"
+                    autoCorrect={false}
+                    importantForAutofill="no"
+                    selectionColor={colors.primary}
                     style={{
                       flex: 1,
                       backgroundColor: '#09090B',
@@ -724,6 +728,10 @@ export default function MatchDetail() {
                     placeholder="#"
                     placeholderTextColor={colors.textMuted}
                     underlineColorAndroid="transparent"
+                    autoComplete="off"
+                    autoCorrect={false}
+                    importantForAutofill="no"
+                    selectionColor={colors.primary}
                     style={{
                       width: 60,
                       backgroundColor: '#09090B',
