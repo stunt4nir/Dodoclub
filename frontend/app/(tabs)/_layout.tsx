@@ -19,10 +19,10 @@ export default function TabsLayout() {
   }
   if (!user) return <Redirect href="/(auth)/login" />;
 
-  // Tuned for Samsung S25 Ultra: clear of gesture pill with larger icons.
+  // Push icons very high — user's S25 Ultra has persistent overlap with gesture bar.
   const bottomInset = insets.bottom;
-  const ANDROID_FLOOR = 180; // solid clearance above gesture pill, not excessive
-  const extraBottom = Platform.OS === 'android' ? Math.max(ANDROID_FLOOR, bottomInset + 100) : bottomInset;
+  const ANDROID_FLOOR = 500; // very generous clearance
+  const extraBottom = Platform.OS === 'android' ? Math.max(ANDROID_FLOOR, bottomInset + 380) : bottomInset;
   const tabBarHeight = 80 + extraBottom;
   const tabBarPaddingBottom = Math.max(10, extraBottom);
 
