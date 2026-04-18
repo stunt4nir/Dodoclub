@@ -139,6 +139,36 @@ export default function ProfileScreen() {
     }
   };
 
+  const resetAppData = () => {
+    Alert.alert(
+      'Reset all app data?',
+      'Deletes every match and every non-admin player, and zeros out admin stats. This cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reset everything',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const res = await api<{ matches_deleted: number; users_deleted: number }>(
+                '/admin/reset',
+                { method: 'POST' }
+              );
+              await refresh();
+              await load();
+              Alert.alert(
+                'Reset complete',
+                `Deleted ${res.matches_deleted} match(es) and ${res.users_deleted} player(s).`
+              );
+            } catch (e: any) {
+              Alert.alert('Error', e.message || 'Reset failed');
+            }
+          },
+        },
+      ]
+    );
+  };
+
   if (!user) {
     return (
       <SafeAreaView style={styles.safe}>
@@ -340,6 +370,25 @@ export default function ProfileScreen() {
                 </Muted>
               )}
             </View>
+
+            <Overline style={{ marginTop: spacing.lg, marginBottom: spacing.sm }}>
+              Danger zone
+            </Overline>
+            <TouchableOpacity
+              testID="reset-app-data-btn"
+              onPress={resetAppData}
+              style={styles.dangerBtn}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="trash-bin-outline" size={18} color={colors.danger} />
+              <View style={{ flex: 1 }}>
+                <Text style={styles.dangerTitle}>RESET ALL APP DATA</Text>
+                <Text style={styles.dangerSub}>
+                  Deletes every match & non-admin player. Zeros admin stats.
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={colors.danger} />
+            </TouchableOpacity>
           </>
         )}
       </ScrollView>
@@ -513,4 +562,26 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   posChipTextActive: { color: '#fff' },
+  dangerBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.danger,
+    borderRadius: radii.md,
+    padding: spacing.md,
+  },
+  dangerTitle: {
+    color: colors.danger,
+    fontWeight: '900',
+    letterSpacing: 1.2,
+    fontSize: 13,
+  },
+  dangerSub: {
+    color: colors.textSecondary,
+    fontSize: 11,
+    fontWeight: '600',
+    marginTop: 2,
+  },
 });

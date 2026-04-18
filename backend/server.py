@@ -883,6 +883,34 @@ async def delete_match(mid: str, user=Depends(require_editor)):
     return {"ok": True}
 
 
+@api.post("/admin/reset")
+async def admin_reset(admin=Depends(require_admin)):
+    """Wipe all matches and non-admin users, reset admin stats.
+    The seeded admin, club config, and reset tokens are preserved (tokens expire)."""
+    matches_deleted = await db.matches.delete_many({})
+    users_deleted = await db.users.delete_many({"role": {"$ne": "admin"}})
+    # Reset all admin users' stats (there could be multiple admins)
+    await db.users.update_many(
+        {"role": "admin"},
+        {
+            "$set": {
+                "goals": 0,
+                "assists": 0,
+                "matches_played": 0,
+                "wins": 0,
+                "draws": 0,
+                "losses": 0,
+                "league_points": 0,
+            }
+        },
+    )
+    return {
+        "ok": True,
+        "matches_deleted": matches_deleted.deleted_count,
+        "users_deleted": users_deleted.deleted_count,
+    }
+
+
 @api.get("/")
 async def root():
     return {"app": "Club Dodo", "status": "ok"}
