@@ -20,10 +20,10 @@ export default function TabsLayout() {
   if (!user) return <Redirect href="/(auth)/login" />;
 
   // Respect Android nav / iOS home indicator so tab bar doesn't sit under system keys.
-  // On Android, safe-area insets can under-report on some OEM skins, so we
-  // enforce a generous minimum breathing room above the system bar.
+  // Samsung One UI (S23/S24/S25 etc.) under-reports the gesture-bar inset, so
+  // we enforce a generous floor on Android.
   const bottomInset = insets.bottom;
-  const ANDROID_FLOOR = 24; // guaranteed clearance above Android nav keys/gesture pill
+  const ANDROID_FLOOR = 56; // enough clearance for Samsung gesture pill / 3-button nav
   const extraBottom = Platform.OS === 'android' ? Math.max(ANDROID_FLOOR, bottomInset) : bottomInset;
   const tabBarHeight = 60 + extraBottom;
   const tabBarPaddingBottom = Math.max(10, extraBottom);
