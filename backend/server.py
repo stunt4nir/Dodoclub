@@ -312,17 +312,21 @@ async def me(user=Depends(get_current_user)):
 
 @api.post("/auth/forgot-password")
 async def forgot_password(data: ForgotPasswordIn):
-    """Dev-mode flow: generate 6-digit code, store it, and return it
-    in the response so the user can enter it on the reset screen.
-    Still silently succeeds when email doesn't exist to avoid leaking
-    registered emails."""
+    """Generate a 6-digit reset code, store a salted hash, and only return the
+    plaintext code when the server is in DEV_MODE. In production, the code is
+    generated silently — an email/SMS service must deliver it. The response
+    intentionally stays identical regardless of whether the email exists so
+    attackers can't enumerate registered users."""
     import secrets
+    import os
+    dev_mode = os.getenv("DEV_MODE", "0").lower() in ("1", "true", "yes")
     email = data.email.lower()
     u = await db.users.find_one({"email": email}, {"_id": 0})
     # Clean up expired tokens for this email to avoid collisions
     await db.password_reset_tokens.delete_many({"email": email})
+    generic_msg = "If that email is registered, a code has been generated."
     if not u:
-        return {"ok": True, "dev_code": None, "message": "If that email is registered, a code has been generated."}
+        return {"ok": True, "dev_code": None, "message": generic_msg}
     code = f"{secrets.randbelow(1_000_000):06d}"
     await db.password_reset_tokens.insert_one(
         {
@@ -332,12 +336,16 @@ async def forgot_password(data: ForgotPasswordIn):
             "used": False,
         }
     )
-    logger.info("Password reset code for %s: %s (dev mode)", email, code)
-    return {
-        "ok": True,
-        "dev_code": code,  # dev-mode: returned so the UI can display it
-        "message": "Code generated. It expires in 60 minutes.",
-    }
+    if dev_mode:
+        logger.info("Password reset code for %s: %s (DEV_MODE)", email, code)
+        return {
+            "ok": True,
+            "dev_code": code,  # only returned in DEV_MODE
+            "message": "Code generated. It expires in 60 minutes.",
+        }
+    # Production: never leak the code in the response
+    # TODO: dispatch the code via email/SMS here.
+    return {"ok": True, "dev_code": None, "message": generic_msg}
 
 
 @api.post("/auth/reset-password")

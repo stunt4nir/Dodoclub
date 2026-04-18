@@ -189,10 +189,22 @@ backend:
           agent: "testing"
           comment: "20/20 PASS in /app/backend_test.py. Verified end-to-end: (1) Register killme user succeeds. (2) Admin DELETE /api/users/{killme_id} → 200 with body {ok:true, deleted_user_id:<id>}. (3) GET /api/users no longer lists that id. (4) Login with killme email → 401 (user gone); old killme JWT on /auth/me also → 401. (5) Non-admin alice DELETE bob → 403 (require_admin guard). (6) Admin self-delete DELETE /users/{admin.id} → 400 with detail 'You cannot delete your own account'. (7) Admin DELETE /users/nonexistent-id → 404. (8) Last-admin rule: self-delete check fires first for sole admin — documented, no code path needed beyond existing guard. (9-12) Cascade test: stats user registered, admin created friendly match (team_size=4, future date), stats+admin both voted yes, stats posted a comment, admin called generate-lineup (stats appeared in team_a/b). After admin DELETE /users/{stats_id} → 200: GET /matches/{id} votes array no longer contains stats_id (only admin remains), and lineup team_a/team_b/team_c/reserves all have stats_id purged; GET /matches/{id}/comments returns 0 comments from stats (match_comments.delete_many({user_id}) worked). (13) Unauth DELETE /api/users/xxx (no Authorization header) → 401. All assertions match review spec exactly."
 
+  - task: "Forgot-password DEV_MODE gating (security)"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: "11/11 PASS in /app/backend_test_devmode.py. (A1) With DEV_MODE=1 (current .env), POST /api/auth/forgot-password {email: admin@clubdodo.com} → 200 with non-null 6-digit dev_code. (A2) Used that code to POST /api/auth/reset-password with temp password → 200; login with temp password → 200. (A3) Flipped backend/.env to DEV_MODE=\"0\" and restarted backend via supervisor; POST /api/auth/forgot-password for real admin email → 200 with dev_code: null (key present, value null, never leaked). Bogus email also returns dev_code: null — identical generic response so no user enumeration. (A4) Restored DEV_MODE=\"1\", restarted backend, verified forgot-password returns a real code again, then reset admin password back to dodo2026 so /app/memory/test_credentials.md stays valid. (B5-B8) Regression smoke: POST /api/auth/login with admin@clubdodo.com/dodo2026 → 200, GET /api/auth/me → 200 role=admin, GET /api/matches → 200 list, GET /api/config → 200 (public, no auth). Env file confirmed back to DEV_MODE=\"1\". No regressions."
+
 metadata:
   created_by: "testing_agent"
-  version: "1.3"
-  test_sequence: 4
+  version: "1.4"
+  test_sequence: 5
   run_ui: false
 
 test_plan:
