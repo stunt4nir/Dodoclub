@@ -33,6 +33,7 @@ type Vote = {
   shirt_number: number | null;
   profile_picture: string | null;
   preferred_position?: string | null;
+  preferred_positions?: string[];
   rating: number;
   vote: 'yes' | 'no' | 'reserve';
 };
@@ -267,6 +268,7 @@ export default function MatchDetail() {
       shirt_number: u.shirt_number,
       profile_picture: u.profile_picture,
       preferred_position: u.preferred_position,
+      preferred_positions: u.preferred_positions,
       rating: u.rating,
       vote: 'yes',
     };
@@ -548,7 +550,13 @@ export default function MatchDetail() {
                   <Avatar uri={v.profile_picture} size={36} name={v.name} shirt={v.shirt_number || undefined} />
                   <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                     <Text style={styles.voterName} numberOfLines={1}>{v.name}</Text>
-                    {v.preferred_position && <View style={styles.posBadge}><Text style={styles.posBadgeText}>{v.preferred_position}</Text></View>}
+                    {(() => {
+                      const posList = (v.preferred_positions && v.preferred_positions.length > 0)
+                        ? v.preferred_positions
+                        : (v.preferred_position ? [v.preferred_position] : []);
+                      if (posList.length === 0) return null;
+                      return <View style={styles.posBadge}><Text style={styles.posBadgeText}>{posList.slice(0, 2).join('/')}</Text></View>;
+                    })()}
                   </View>
                   <Text style={styles.voterRating}>{v.rating}</Text>
                 </View>
@@ -682,11 +690,17 @@ export default function MatchDetail() {
                       >
                         <Avatar uri={u.profile_picture} size={30} name={u.name} shirt={u.shirt_number || undefined} />
                         <Text style={styles.pickerName} numberOfLines={1}>{u.name}</Text>
-                        {u.preferred_position && (
-                          <View style={styles.posBadge}>
-                            <Text style={styles.posBadgeText}>{u.preferred_position}</Text>
-                          </View>
-                        )}
+                        {(() => {
+                          const posList = (u.preferred_positions && u.preferred_positions.length > 0)
+                            ? u.preferred_positions
+                            : (u.preferred_position ? [u.preferred_position] : []);
+                          if (posList.length === 0) return null;
+                          return (
+                            <View style={styles.posBadge}>
+                              <Text style={styles.posBadgeText}>{posList.slice(0, 2).join('/')}</Text>
+                            </View>
+                          );
+                        })()}
                         <Ionicons name="add-circle" size={20} color={colors.primary} />
                       </TouchableOpacity>
                     ));

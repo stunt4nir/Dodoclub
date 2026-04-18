@@ -165,10 +165,22 @@ backend:
           agent: "testing"
           comment: "Created friendly match team_size=3, future date. Voted 'yes' for admin + 6 test users (7 total). POST /api/matches/{id}/generate-lineup returned 200 with team_a=3, team_b=3, team_c=0, reserves=1 (correct — capacity 6, 1 overflow). Every player's preferred_position preserved exactly (CB/CAM/ST/CAM-admin) — no coercion to ANY. Position bucket mapping (CB/LB/RB→DEF, CDM/CM/CAM→MID, LW/RW/ST→FWD) worked without errors."
 
+  - task: "Multi-position support (preferred_positions list, max 2)"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: "Full multi-position test suite (18/18 PASS in /app/backend_test.py). Validated:\n  • T1 Admin login returns JWT + user with BOTH preferred_position AND preferred_positions keys.\n  • T2 PUT /api/users/me {preferred_positions:[CAM,CDM]} → GET /auth/me returns primary='CAM', list=['CAM','CDM'].\n  • T3 PUT [ST] → primary='ST', list=['ST'].\n  • T4 PUT [] (empty list) correctly clears both: primary=null, list=[].\n  • T5 PUT [GK,CB,CAM] (3 items) → 422 as expected (max_length=2 enforced by pydantic).\n  • T6 Backward compat: PUT {preferred_position:'LW'} (legacy singular) → list auto-synced to ['LW'] and primary='LW'.\n  • T7 POST /api/auth/register {preferred_positions:[CAM,CDM], ...} → response user has both fields populated; login + GET /auth/me confirms persistence.\n  • T8 Registered 6 users with varied combos ([CAM,CDM], [ST,CAM], [CB,RB], [GK], [LB,CB], [LW,RW]), admin set to [CAM,CDM]. Created friendly match team_size=3, all 7 voted yes. POST /matches/{id}/generate-lineup returned 200 (team_a=3, team_b=3, reserves=1). Every player in team_a+team_b preserved preferred_positions array exactly as registered (no loss, no coercion) and preferred_position == preferred_positions[0].\n  • T9 GET /api/matches/{id} returns votes where every entry includes BOTH preferred_position and preferred_positions, with primary matching list[0]. No 500s anywhere. user_public() and _match_public() both serialise both fields correctly."
+
 metadata:
   created_by: "testing_agent"
-  version: "1.0"
-  test_sequence: 1
+  version: "1.1"
+  test_sequence: 2
   run_ui: false
 
 test_plan:
@@ -180,3 +192,5 @@ test_plan:
 agent_communication:
     - agent: "testing"
       message: "All 38 backend checks PASSED (see /app/backend_test.py). Positions work end-to-end: profile update, validation of bad values (422), backward compat, registration, and the lineup algorithm preserves exact preferred_position while bucketing specific roles (CB/LB/RB→DEF, CDM/CM/CAM→MID, LW/RW/ST→FWD) for balancing. One minor doc note: review request said PUT /api/auth/me for profile updates, but the actual endpoint is PUT /api/users/me — PUT on /api/auth/me returns 405. Consider aligning the docs (no code change required). No failures to action."
+    - agent: "testing"
+      message: "Multi-position feature (preferred_positions, max 2) verified end-to-end. 18/18 checks PASS. Covered: admin login, 2-item list, 1-item list, empty list clear, >2 items 422, legacy singular backward-compat (auto-syncs list), register with preferred_positions (response + persistence after re-login), lineup smoke with 6 varied users + admin voting yes (generate-lineup 200, arrays preserved, primary==list[0]), and GET /matches/{id} votes include BOTH fields. user_public() and _match_public() serialise preferred_position + preferred_positions correctly. No 500s. No regressions in prior single-position behaviour. Nothing to fix — main agent can summarise and finish."

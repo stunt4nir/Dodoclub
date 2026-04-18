@@ -1,13 +1,16 @@
 import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { api, setToken, getToken, clearToken } from './api';
 
+export type Position = 'GK' | 'CB' | 'LB' | 'RB' | 'CDM' | 'CM' | 'CAM' | 'LW' | 'RW' | 'ST' | 'DEF' | 'MID' | 'FWD' | 'ANY';
+
 export type User = {
   id: string;
   email: string;
   name: string;
   profile_picture: string | null;
   shirt_number: number | null;
-  preferred_position: 'GK' | 'CB' | 'LB' | 'RB' | 'CDM' | 'CM' | 'CAM' | 'LW' | 'RW' | 'ST' | 'DEF' | 'MID' | 'FWD' | 'ANY' | null;
+  preferred_position: Position | null;
+  preferred_positions?: Position[];
   role: 'admin' | 'user';
   can_edit_matches: boolean;
   goals: number;

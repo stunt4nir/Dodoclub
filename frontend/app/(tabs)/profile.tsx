@@ -49,7 +49,11 @@ export default function ProfileScreen() {
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [name, setName] = useState(user?.name || '');
   const [shirt, setShirt] = useState(user?.shirt_number ? String(user.shirt_number) : '');
-  const [position, setPosition] = useState<User['preferred_position']>(user?.preferred_position || null);
+  const [positions, setPositions] = useState<NonNullable<User['preferred_positions']>>(
+    (user?.preferred_positions && user.preferred_positions.length > 0)
+      ? user.preferred_positions
+      : (user?.preferred_position ? [user.preferred_position] : [])
+  );
   const [pic, setPic] = useState<string | null>(user?.profile_picture || null);
   const [savingProfile, setSavingProfile] = useState(false);
   const [savingClub, setSavingClub] = useState(false);
@@ -77,11 +81,25 @@ export default function ProfileScreen() {
       if (user) {
         setName(user.name);
         setShirt(user.shirt_number ? String(user.shirt_number) : '');
-        setPosition(user.preferred_position || null);
+        const nextPositions = (user.preferred_positions && user.preferred_positions.length > 0)
+          ? user.preferred_positions
+          : (user.preferred_position ? [user.preferred_position] : []);
+        setPositions(nextPositions);
         setPic(user.profile_picture);
       }
     }, [load, user])
   );
+
+  const togglePosition = useCallback((p: NonNullable<User['preferred_positions']>[number]) => {
+    setPositions((prev) => {
+      if (prev.includes(p)) return prev.filter((x) => x !== p);
+      if (prev.length >= 2) {
+        Alert.alert('Max 2 positions', 'Tap a selected position to swap it.');
+        return prev;
+      }
+      return [...prev, p];
+    });
+  }, []);
 
   const saveProfile = async () => {
     setSavingProfile(true);
@@ -89,7 +107,7 @@ export default function ProfileScreen() {
       const n = shirt ? parseInt(shirt, 10) : null;
       const body: any = { name: name.trim() };
       if (n != null && Number.isFinite(n)) body.shirt_number = n;
-      if (position) body.preferred_position = position;
+      body.preferred_positions = positions;
       if (pic !== user?.profile_picture) body.profile_picture = pic;
       await api('/users/me', { method: 'PUT', body });
       await refresh();
@@ -292,7 +310,15 @@ export default function ProfileScreen() {
             placeholderTextColor={colors.textMuted}
           />
 
-          <Text style={[styles.label, { marginTop: spacing.md }]}>PREFERRED POSITION</Text>
+          <Text style={[styles.label, { marginTop: spacing.md }]}>
+            PREFERRED POSITIONS <Text style={{ color: colors.textMuted, fontWeight: '600' }}>(up to 2)</Text>
+          </Text>
+          {positions.length > 0 && (
+            <Text style={styles.primaryHint}>
+              Primary: <Text style={{ color: colors.primary, fontWeight: '900' }}>{positions[0]}</Text>
+              {positions[1] ? <Text style={{ color: colors.textSecondary }}> · Secondary: {positions[1]}</Text> : null}
+            </Text>
+          )}
           {([
             { group: 'Goalkeeper', items: ['GK'] },
             { group: 'Defenders', items: ['CB', 'LB', 'RB'] },
@@ -303,19 +329,33 @@ export default function ProfileScreen() {
             <View key={section.group} style={{ marginTop: 8 }}>
               <Text style={styles.posGroupLabel}>{section.group}</Text>
               <View style={styles.chipRow}>
-                {section.items.map((p) => (
-                  <TouchableOpacity
-                    key={p}
-                    testID={`position-${p}-btn`}
-                    onPress={() => setPosition(p as User['preferred_position'])}
-                    activeOpacity={0.85}
-                    style={[styles.posChip, position === p && styles.posChipActive]}
-                  >
-                    <Text style={[styles.posChipText, position === p && styles.posChipTextActive]}>
-                      {p}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
+                {section.items.map((p) => {
+                  const idx = positions.indexOf(p as any);
+                  const isSelected = idx >= 0;
+                  const isPrimary = idx === 0;
+                  return (
+                    <TouchableOpacity
+                      key={p}
+                      testID={`position-${p}-btn`}
+                      onPress={() => togglePosition(p as any)}
+                      activeOpacity={0.85}
+                      style={[
+                        styles.posChip,
+                        isSelected && styles.posChipActive,
+                        isPrimary && styles.posChipPrimary,
+                      ]}
+                    >
+                      {isSelected && (
+                        <View style={styles.posChipBadge}>
+                          <Text style={styles.posChipBadgeText}>{isPrimary ? '1' : '2'}</Text>
+                        </View>
+                      )}
+                      <Text style={[styles.posChipText, isSelected && styles.posChipTextActive]}>
+                        {p}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
               </View>
             </View>
           ))}
@@ -651,6 +691,8 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     backgroundColor: colors.background,
     minWidth: 54,
+    position: 'relative',
+    overflow: 'visible',
   },
   posChipActive: {
     backgroundColor: colors.primary,
@@ -663,6 +705,40 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
   posChipTextActive: { color: '#fff' },
+  posChipPrimary: {
+    // Highlight primary chip slightly more (subtle ring)
+    shadowColor: colors.primary,
+    shadowOpacity: 0.4,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 3,
+  },
+  posChipBadge: {
+    position: 'absolute',
+    top: -6,
+    right: -6,
+    minWidth: 16,
+    height: 16,
+    paddingHorizontal: 4,
+    borderRadius: 8,
+    backgroundColor: '#0f172a',
+    borderWidth: 1,
+    borderColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  posChipBadgeText: {
+    color: colors.primary,
+    fontSize: 10,
+    fontWeight: '900',
+  },
+  primaryHint: {
+    color: colors.textSecondary,
+    fontSize: 12,
+    marginTop: 4,
+    marginBottom: 4,
+    fontWeight: '600',
+  },
   posGroupLabel: {
     color: colors.textMuted,
     fontSize: 11,

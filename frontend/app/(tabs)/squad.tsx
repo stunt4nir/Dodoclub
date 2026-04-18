@@ -21,6 +21,7 @@ type Player = {
   shirt_number: number | null;
   profile_picture: string | null;
   preferred_position: string | null;
+  preferred_positions?: string[];
   goals: number;
   assists: number;
   matches_played: number;
@@ -139,11 +140,17 @@ export default function SquadScreen() {
                 <Text style={styles.name} numberOfLines={1}>
                   {item.name}
                 </Text>
-                {item.preferred_position && (
-                  <View style={styles.posBadge}>
-                    <Text style={styles.posBadgeText}>{item.preferred_position}</Text>
-                  </View>
-                )}
+                {(() => {
+                  const posList = (item.preferred_positions && item.preferred_positions.length > 0)
+                    ? item.preferred_positions
+                    : (item.preferred_position ? [item.preferred_position] : []);
+                  if (posList.length === 0) return null;
+                  return (
+                    <View style={styles.posBadge}>
+                      <Text style={styles.posBadgeText}>{posList.slice(0, 2).join('/')}</Text>
+                    </View>
+                  );
+                })()}
                 {item.role === 'admin' && (
                   <Text style={styles.adminTag}>ADMIN</Text>
                 )}

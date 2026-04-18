@@ -62,13 +62,19 @@ def compute_rating(goals: int, assists: int, matches_played: int) -> float:
 
 
 def user_public(u: dict) -> dict:
+    # Primary + up to 2 positions for multi-position support (backward compat)
+    positions = u.get("preferred_positions") or []
+    if not positions and u.get("preferred_position"):
+        positions = [u["preferred_position"]]
+    primary = positions[0] if positions else u.get("preferred_position")
     return {
         "id": u["id"],
         "email": u.get("email"),
         "name": u.get("name"),
         "profile_picture": u.get("profile_picture"),
         "shirt_number": u.get("shirt_number"),
-        "preferred_position": u.get("preferred_position"),
+        "preferred_position": primary,
+        "preferred_positions": positions,
         "role": u.get("role", "user"),
         "can_edit_matches": u.get("can_edit_matches", False),
         "goals": u.get("goals", 0),
@@ -117,15 +123,19 @@ async def require_admin(request: Request) -> dict:
 
 
 # ---------- Models ----------
+POSITION_LITERAL = Literal[
+    "GK", "CB", "LB", "RB", "CDM", "CM", "CAM", "LW", "RW", "ST",
+    "DEF", "MID", "FWD", "ANY"
+]
+
+
 class RegisterIn(BaseModel):
     email: EmailStr
     password: str = Field(min_length=6)
     name: str = Field(min_length=1, max_length=40)
     shirt_number: Optional[int] = Field(default=None, ge=1, le=99)
-    preferred_position: Optional[Literal[
-        "GK", "CB", "LB", "RB", "CDM", "CM", "CAM", "LW", "RW", "ST",
-        "DEF", "MID", "FWD", "ANY"
-    ]] = None
+    preferred_position: Optional[POSITION_LITERAL] = None  # legacy single
+    preferred_positions: Optional[List[POSITION_LITERAL]] = Field(default=None, max_length=2)
 
 
 class LoginIn(BaseModel):
@@ -137,10 +147,8 @@ class ProfileUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=40)
     profile_picture: Optional[str] = None  # base64
     shirt_number: Optional[int] = Field(default=None, ge=1, le=99)
-    preferred_position: Optional[Literal[
-        "GK", "CB", "LB", "RB", "CDM", "CM", "CAM", "LW", "RW", "ST",
-        "DEF", "MID", "FWD", "ANY"
-    ]] = None
+    preferred_position: Optional[POSITION_LITERAL] = None  # legacy single
+    preferred_positions: Optional[List[POSITION_LITERAL]] = Field(default=None, max_length=2)
 
 
 class MatchCreate(BaseModel):
@@ -252,6 +260,11 @@ async def register(data: RegisterIn):
     if await db.users.find_one({"email": email}):
         raise HTTPException(400, "Email already registered")
     uid = str(uuid.uuid4())
+    # Normalize positions (multi takes precedence, fallback to singular)
+    positions = list(data.preferred_positions or [])
+    if not positions and data.preferred_position:
+        positions = [data.preferred_position]
+    primary = positions[0] if positions else None
     doc = {
         "id": uid,
         "email": email,
@@ -259,7 +272,8 @@ async def register(data: RegisterIn):
         "name": data.name,
         "profile_picture": None,
         "shirt_number": data.shirt_number,
-        "preferred_position": data.preferred_position,
+        "preferred_position": primary,
+        "preferred_positions": positions,
         "role": "user",
         "can_edit_matches": False,
         "goals": 0,
@@ -360,7 +374,18 @@ async def list_users(user=Depends(get_current_user)):
 
 @api.put("/users/me")
 async def update_profile(data: ProfileUpdate, user=Depends(get_current_user)):
-    updates = {k: v for k, v in data.dict(exclude_unset=True).items() if v is not None}
+    raw = data.dict(exclude_unset=True)
+    updates = {k: v for k, v in raw.items() if v is not None}
+
+    # Keep primary (`preferred_position`) and list (`preferred_positions`) in sync.
+    if "preferred_positions" in updates:
+        positions = updates["preferred_positions"] or []
+        updates["preferred_positions"] = positions[:2]  # safety cap
+        updates["preferred_position"] = positions[0] if positions else None
+    elif "preferred_position" in updates:
+        # Legacy single-value update — rebuild list so both stay consistent.
+        updates["preferred_positions"] = [updates["preferred_position"]] if updates["preferred_position"] else []
+
     if updates:
         await db.users.update_one({"id": user["id"]}, {"$set": updates})
     u = await db.users.find_one({"id": user["id"]}, {"_id": 0})
@@ -408,6 +433,9 @@ def _match_public(m: dict, users_by_id: dict) -> dict:
                     "shirt_number": u.get("shirt_number"),
                     "profile_picture": u.get("profile_picture"),
                     "preferred_position": u.get("preferred_position"),
+                    "preferred_positions": u.get("preferred_positions") or (
+                        [u.get("preferred_position")] if u.get("preferred_position") else []
+                    ),
                     "rating": compute_rating(
                         u.get("goals", 0),
                         u.get("assists", 0),
@@ -604,6 +632,9 @@ def _player_mini(u: dict) -> dict:
         "shirt_number": u.get("shirt_number"),
         "profile_picture": u.get("profile_picture"),
         "preferred_position": u.get("preferred_position"),
+        "preferred_positions": u.get("preferred_positions") or (
+            [u.get("preferred_position")] if u.get("preferred_position") else []
+        ),
         "rating": compute_rating(
             u.get("goals", 0),
             u.get("assists", 0),

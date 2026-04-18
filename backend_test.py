@@ -1,306 +1,296 @@
 """
-Backend tests for Club Dodo — player position expansion.
+Backend tests for Club Dodo — multi-position (preferred_positions) feature.
 
 Covers:
-1. Admin login
-2. PUT profile with each new position (CDM, CAM, CB, LB, RB, LW, RW, ST) + GK legacy
-3. Invalid position returns 422
-4. Legacy positions (GK, DEF, MID, FWD, ANY) backward compatibility
-5. Lineup smoke test with 6 users across new positions
+  1. Admin login
+  2. PUT /api/users/me with preferred_positions=["CAM","CDM"]
+  3. PUT /api/users/me with preferred_positions=["ST"]
+  4. PUT /api/users/me with preferred_positions=[] (empty clears)
+  5. PUT /api/users/me with preferred_positions=["GK","CB","CAM"] → 422
+  6. Backward compat: PUT preferred_position="LW" → list auto-synced
+  7. Register: POST /api/auth/register with preferred_positions
+  8. Lineup smoke: 6 users + admin → generate-lineup preserves arrays
+  9. Match payload: GET /api/matches/{id} votes contain both fields
 """
 import os
+import sys
 import uuid
 import requests
-from datetime import datetime, timezone, timedelta
 
-BASE = "https://dodo-roster-build.preview.emergentagent.com/api"
-
+BASE = os.environ.get("BACKEND_URL", "https://dodo-roster-build.preview.emergentagent.com").rstrip("/")
+API = f"{BASE}/api"
 ADMIN_EMAIL = "admin@clubdodo.com"
 ADMIN_PASSWORD = "dodo2026"
-
-NEW_POSITIONS = ["CB", "LB", "RB", "CDM", "CM", "CAM", "LW", "RW", "ST"]
-LEGACY_POSITIONS = ["GK", "DEF", "MID", "FWD", "ANY"]
 
 results = []
 
 
 def record(name, passed, detail=""):
     status = "PASS" if passed else "FAIL"
-    line = f"[{status}] {name}"
-    if detail:
-        line += f" — {detail}"
-    print(line)
+    print(f"[{status}] {name}{' — ' + detail if detail else ''}")
     results.append((name, passed, detail))
 
 
-def auth_hdr(token):
-    return {"Authorization": f"Bearer {token}"}
+def post(path, json=None, token=None):
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    return requests.post(f"{API}{path}", json=json, headers=headers, timeout=30)
 
 
-def main():
-    # 1) Admin login
-    r = requests.post(
-        f"{BASE}/auth/login",
-        json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD},
-        timeout=30,
-    )
+def put(path, json=None, token=None):
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    return requests.put(f"{API}{path}", json=json, headers=headers, timeout=30)
+
+
+def get(path, token=None):
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    return requests.get(f"{API}{path}", headers=headers, timeout=30)
+
+
+def t1_admin_login():
+    r = post("/auth/login", {"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
     if r.status_code != 200:
-        record("admin_login", False, f"HTTP {r.status_code} {r.text[:300]}")
+        record("T1 admin login", False, f"status={r.status_code} body={r.text[:200]}")
+        return None
+    body = r.json()
+    token = body.get("token")
+    user = body.get("user", {})
+    ok = bool(token) and "preferred_position" in user and "preferred_positions" in user
+    record("T1 admin login returns token + both position fields on user", ok,
+           f"keys={list(user.keys())[:12]}")
+    return token
+
+
+def t2_two_positions(token):
+    r = put("/users/me", {"preferred_positions": ["CAM", "CDM"]}, token=token)
+    if r.status_code != 200:
+        record("T2 PUT /users/me [CAM,CDM]", False, f"status={r.status_code} body={r.text[:200]}")
         return
-    admin_token = r.json()["token"]
-    admin_id = r.json()["user"]["id"]
-    record("admin_login", True, f"admin_id={admin_id}")
+    me = get("/auth/me", token=token).json()
+    ok = me.get("preferred_position") == "CAM" and me.get("preferred_positions") == ["CAM", "CDM"]
+    record("T2 GET /auth/me → primary=CAM, list=[CAM,CDM]", ok,
+           f"got primary={me.get('preferred_position')} list={me.get('preferred_positions')}")
 
-    # The review says PUT /api/auth/me but implementation is PUT /api/users/me.
-    # Try /api/auth/me first, fallback to /api/users/me.
-    probe = requests.put(
-        f"{BASE}/auth/me",
-        headers=auth_hdr(admin_token),
-        json={"preferred_position": "CDM"},
-        timeout=30,
-    )
-    if probe.status_code in (404, 405):
-        profile_update_path = "/users/me"
-        record(
-            "profile_update_endpoint_probe",
-            True,
-            f"PUT /auth/me not defined (got {probe.status_code}); using /users/me (actual implementation)",
-        )
-    else:
-        profile_update_path = "/auth/me"
-        record(
-            "profile_update_endpoint_probe",
-            True,
-            f"/auth/me responded {probe.status_code}",
-        )
 
-    # Helper to update then GET /auth/me
-    def set_pos_and_check(pos, expect_ok):
-        r = requests.put(
-            f"{BASE}{profile_update_path}",
-            headers=auth_hdr(admin_token),
-            json={"preferred_position": pos},
-            timeout=30,
-        )
-        if expect_ok:
-            if r.status_code != 200:
-                return False, f"update HTTP {r.status_code} {r.text[:200]}"
-            g = requests.get(f"{BASE}/auth/me", headers=auth_hdr(admin_token), timeout=30)
-            if g.status_code != 200:
-                return False, f"GET /auth/me HTTP {g.status_code}"
-            got = g.json().get("preferred_position")
-            if got != pos:
-                return False, f"expected {pos}, got {got}"
-            return True, f"preferred_position={got}"
-        else:
-            if r.status_code != 422:
-                return False, f"expected 422 got {r.status_code} {r.text[:200]}"
-            return True, "validation error 422 as expected"
+def t3_single_position(token):
+    r = put("/users/me", {"preferred_positions": ["ST"]}, token=token)
+    if r.status_code != 200:
+        record("T3 PUT /users/me [ST]", False, f"status={r.status_code}")
+        return
+    me = get("/auth/me", token=token).json()
+    ok = me.get("preferred_position") == "ST" and me.get("preferred_positions") == ["ST"]
+    record("T3 GET /auth/me → primary=ST, list=[ST]", ok,
+           f"got primary={me.get('preferred_position')} list={me.get('preferred_positions')}")
 
-    # 2) New positions
-    for pos in NEW_POSITIONS:
-        ok, detail = set_pos_and_check(pos, expect_ok=True)
-        record(f"set_new_position_{pos}", ok, detail)
 
-    # 3) Invalid position
-    ok, detail = set_pos_and_check("XYZ", expect_ok=False)
-    record("invalid_position_XYZ_422", ok, detail)
+def t4_empty_positions(token):
+    r = put("/users/me", {"preferred_positions": []}, token=token)
+    if r.status_code != 200:
+        record("T4 PUT /users/me []", False, f"status={r.status_code} body={r.text[:200]}")
+        return
+    me = get("/auth/me", token=token).json()
+    ok = me.get("preferred_position") is None and me.get("preferred_positions") == []
+    record("T4 GET /auth/me → primary=None, list=[]", ok,
+           f"got primary={me.get('preferred_position')} list={me.get('preferred_positions')}")
 
-    # 4) Legacy positions
-    for pos in LEGACY_POSITIONS:
-        ok, detail = set_pos_and_check(pos, expect_ok=True)
-        record(f"legacy_position_{pos}", ok, detail)
 
-    # Reset admin pref to something reasonable
-    requests.put(
-        f"{BASE}{profile_update_path}",
-        headers=auth_hdr(admin_token),
-        json={"preferred_position": "CAM"},
-        timeout=30,
-    )
+def t5_too_many_positions(token):
+    r = put("/users/me", {"preferred_positions": ["GK", "CB", "CAM"]}, token=token)
+    ok = r.status_code == 422
+    record("T5 PUT /users/me [GK,CB,CAM] → 422", ok, f"status={r.status_code}")
 
-    # 5) Lineup smoke test
-    # Register 6 users: 2 CB, 2 CAM, 2 ST
-    unique = uuid.uuid4().hex[:8]
-    test_user_specs = [
-        ("CB", f"ayoub.{unique}@test.clubdodo.io", "Ayoub Karim"),
-        ("CB", f"samir.{unique}@test.clubdodo.io", "Samir Elattar"),
-        ("CAM", f"mehdi.{unique}@test.clubdodo.io", "Mehdi Benali"),
-        ("CAM", f"nabil.{unique}@test.clubdodo.io", "Nabil Chraibi"),
-        ("ST", f"rayan.{unique}@test.clubdodo.io", "Rayan Tazi"),
-        ("ST", f"yassine.{unique}@test.clubdodo.io", "Yassine Mansour"),
+
+def t6_legacy_single(token):
+    r = put("/users/me", {"preferred_position": "LW"}, token=token)
+    if r.status_code != 200:
+        record("T6 PUT /users/me preferred_position=LW", False, f"status={r.status_code}")
+        return
+    me = get("/auth/me", token=token).json()
+    ok = me.get("preferred_position") == "LW" and me.get("preferred_positions") == ["LW"]
+    record("T6 Legacy single → list auto-synced to [LW]", ok,
+           f"got primary={me.get('preferred_position')} list={me.get('preferred_positions')}")
+
+
+def t7_register_with_positions():
+    suffix = uuid.uuid4().hex[:8]
+    email = f"pos7_{suffix}@clubdodo.example.com"
+    pwd = "Pass12345!"
+    body = {
+        "email": email,
+        "password": pwd,
+        "name": "Pierre Lacroix",
+        "shirt_number": 17,
+        "preferred_positions": ["CAM", "CDM"],
+    }
+    r = post("/auth/register", body)
+    if r.status_code != 200:
+        record("T7 register w/ preferred_positions", False, f"status={r.status_code} body={r.text[:300]}")
+        return
+    resp = r.json()
+    u = resp.get("user", {})
+    ok_resp = u.get("preferred_position") == "CAM" and u.get("preferred_positions") == ["CAM", "CDM"]
+    record("T7a Register response carries both fields correctly", ok_resp,
+           f"got primary={u.get('preferred_position')} list={u.get('preferred_positions')}")
+    login = post("/auth/login", {"email": email, "password": pwd})
+    if login.status_code != 200:
+        record("T7b Login newly registered user", False, f"status={login.status_code}")
+        return
+    tok = login.json()["token"]
+    me = get("/auth/me", token=tok).json()
+    ok_persist = me.get("preferred_position") == "CAM" and me.get("preferred_positions") == ["CAM", "CDM"]
+    record("T7b Persistence via login + GET /auth/me", ok_persist,
+           f"got primary={me.get('preferred_position')} list={me.get('preferred_positions')}")
+
+
+def t8_and_9_lineup(admin_token):
+    combos = [
+        ("Marc Dubois",    ["CAM", "CDM"]),
+        ("Julien Martin",  ["ST", "CAM"]),
+        ("Thomas Leroy",   ["CB", "RB"]),
+        ("Lucas Bernard",  ["GK"]),
+        ("Antoine Moreau", ["LB", "CB"]),
+        ("Nicolas Girard", ["LW", "RW"]),
     ]
-    test_users = []
-    all_registered = True
-    for pos, email, name in test_user_specs:
-        r = requests.post(
-            f"{BASE}/auth/register",
-            json={
-                "email": email,
-                "password": "Pass123!",
-                "name": name,
-                "preferred_position": pos,
-            },
-            timeout=30,
-        )
+    users = []
+    for name, positions in combos:
+        suffix = uuid.uuid4().hex[:8]
+        email = f"lineup_{suffix}@clubdodo.example.com"
+        pwd = "Pass12345!"
+        body = {
+            "email": email,
+            "password": pwd,
+            "name": name,
+            "shirt_number": None,
+            "preferred_positions": positions,
+        }
+        r = post("/auth/register", body)
         if r.status_code != 200:
-            record(f"register_{pos}_{email}", False, f"HTTP {r.status_code} {r.text[:200]}")
-            all_registered = False
-            continue
-        data = r.json()
-        test_users.append(
-            {
-                "pos": pos,
-                "email": email,
-                "name": name,
-                "token": data["token"],
-                "id": data["user"]["id"],
-                "preferred_position_returned": data["user"].get("preferred_position"),
-            }
-        )
-    record(
-        "register_6_test_users_with_new_positions",
-        all_registered,
-        f"registered {len(test_users)}/6",
-    )
+            record(f"T8 register {name}", False, f"status={r.status_code} body={r.text[:200]}")
+            return
+        u = r.json()["user"]
+        users.append((r.json()["token"], u["id"], email, name, positions))
+    record("T8a Registered 6 lineup test users with preferred_positions", True,
+           f"{len(users)} users")
 
-    # Verify returned preferred_position preserved exactly
-    for u in test_users:
-        ok = u["preferred_position_returned"] == u["pos"]
-        record(
-            f"registered_user_preferred_position_preserved_{u['pos']}_{u['name']}",
-            ok,
-            f"returned={u['preferred_position_returned']}",
-        )
+    put("/users/me", {"preferred_positions": ["CAM", "CDM"]}, token=admin_token)
 
-    if not test_users:
-        record("lineup_smoke_test", False, "no test users available")
-        return
-
-    # Create match as admin
-    future_date = (datetime.now(timezone.utc) + timedelta(days=3)).isoformat()
-    r = requests.post(
-        f"{BASE}/matches",
-        headers=auth_hdr(admin_token),
-        json={
-            "title": "Position Smoke Match",
-            "date": future_date,
-            "location": "Casablanca Pitch",
-            "team_size": 3,
-            "match_type": "friendly",
-        },
-        timeout=30,
-    )
+    future = "2030-06-15T18:00:00Z"
+    m_body = {
+        "title": "Multi-position smoke match",
+        "date": future,
+        "location": "Paris Parc des Princes",
+        "team_size": 3,
+        "match_type": "friendly",
+        "third_team_enabled": False,
+        "duration_minutes": 60,
+    }
+    r = post("/matches", m_body, token=admin_token)
     if r.status_code != 200:
-        record("create_match", False, f"HTTP {r.status_code} {r.text[:300]}")
+        record("T8b Create friendly match", False, f"status={r.status_code} body={r.text[:200]}")
         return
     match = r.json()
     mid = match["id"]
-    record("create_match", True, f"mid={mid} team_size={match['team_size']}")
+    record("T8b Create friendly match team_size=3", True, f"mid={mid}")
 
-    # Cast 'yes' votes for admin + each test user
-    vote_ok = True
-    r = requests.post(
-        f"{BASE}/matches/{mid}/vote",
-        headers=auth_hdr(admin_token),
-        json={"vote": "yes"},
-        timeout=30,
-    )
-    if r.status_code != 200:
-        vote_ok = False
-        record("vote_admin", False, f"HTTP {r.status_code} {r.text[:200]}")
-    else:
-        record("vote_admin", True)
-    for u in test_users:
-        r = requests.post(
-            f"{BASE}/matches/{mid}/vote",
-            headers=auth_hdr(u["token"]),
-            json={"vote": "yes"},
-            timeout=30,
-        )
-        if r.status_code != 200:
-            vote_ok = False
-            record(f"vote_{u['pos']}_{u['name']}", False, f"HTTP {r.status_code} {r.text[:200]}")
-        else:
-            record(f"vote_{u['pos']}_{u['name']}", True)
-    record("all_votes_cast", vote_ok)
+    admin_vote = post(f"/matches/{mid}/vote", {"vote": "yes"}, token=admin_token)
+    if admin_vote.status_code != 200:
+        record("T8c Admin yes vote", False, f"status={admin_vote.status_code}")
+        return
+    for tok, uid, email, name, pos in users:
+        rv = post(f"/matches/{mid}/vote", {"vote": "yes"}, token=tok)
+        if rv.status_code != 200:
+            record(f"T8c Vote yes by {name}", False, f"status={rv.status_code}")
+            return
+    record("T8c Collected 7 yes votes (admin + 6 users)", True)
 
-    # Generate lineup
-    r = requests.post(
-        f"{BASE}/matches/{mid}/generate-lineup",
-        headers=auth_hdr(admin_token),
-        timeout=30,
-    )
+    # Test 9 — match payload
+    mresp = get(f"/matches/{mid}", token=admin_token).json()
+    votes = mresp.get("votes", [])
+    record("T9 Match payload has 7 vote entries", len(votes) == 7, f"got {len(votes)}")
+
+    missing = []
+    mismatched = []
+    for v in votes:
+        if "preferred_position" not in v or "preferred_positions" not in v:
+            missing.append(v.get("name"))
+            continue
+        pp = v.get("preferred_positions") or []
+        primary = v.get("preferred_position")
+        if pp and primary != pp[0]:
+            mismatched.append((v.get("name"), primary, pp))
+    record("T9a Every vote entry includes BOTH preferred_position AND preferred_positions",
+           len(missing) == 0, f"missing on: {missing}" if missing else "")
+    record("T9b primary matches preferred_positions[0] in every vote entry",
+           len(mismatched) == 0, f"mismatches: {mismatched}" if mismatched else "")
+
+    # Test 8 — generate lineup
+    r = post(f"/matches/{mid}/generate-lineup", token=admin_token)
     if r.status_code != 200:
-        record("generate_lineup", False, f"HTTP {r.status_code} {r.text[:400]}")
+        record("T8d POST /matches/{id}/generate-lineup", False,
+               f"status={r.status_code} body={r.text[:400]}")
         return
-    match_full = r.json()
-    lineup = match_full.get("lineup")
-    if not lineup:
-        record("generate_lineup", False, "no lineup in response")
-        return
+    record("T8d POST /matches/{id}/generate-lineup returns 200 (no 500)", True)
+    lineup = r.json().get("lineup") or {}
     team_a = lineup.get("team_a", [])
     team_b = lineup.get("team_b", [])
     team_c = lineup.get("team_c", []) or []
     reserves = lineup.get("reserves", []) or []
-    record(
-        "generate_lineup",
-        True,
-        f"team_a={len(team_a)} team_b={len(team_b)} team_c={len(team_c)} reserves={len(reserves)}",
-    )
+    all_players = team_a + team_b + team_c
+    record("T8e Lineup populated (team_a + team_b have players)",
+           len(team_a) > 0 and len(team_b) > 0,
+           f"a={len(team_a)} b={len(team_b)} c={len(team_c)} reserves={len(reserves)}")
 
-    # Verify players distributed (no crash, team_a + team_b non-empty)
-    distribution_ok = len(team_a) > 0 and len(team_b) > 0
-    record(
-        "lineup_has_both_teams_populated",
-        distribution_ok,
-        f"team_a={len(team_a)} team_b={len(team_b)}",
-    )
-
-    # Verify total placed = expected (7 yes voters, team_size=3 → 6 on field + 1 overflow)
-    total_assigned = len(team_a) + len(team_b) + len(team_c)
-    expected_on_field = min(7, 3 * (2 if len(team_c) == 0 else 3))
-    record(
-        "lineup_total_players_on_field_ok",
-        total_assigned == expected_on_field,
-        f"on_field={total_assigned} expected={expected_on_field} (yes_voters=7, team_size=3)",
-    )
-
-    # Verify each player's preferred_position is preserved (not coerced to ANY)
-    all_players = team_a + team_b + team_c + reserves
-    positions_by_uid = {u["id"]: u["pos"] for u in test_users}
-    positions_by_uid[admin_id] = "CAM"  # we set admin to CAM above
-    preservation_failures = []
+    fails = []
     for p in all_players:
-        uid = p.get("user_id")
-        expected = positions_by_uid.get(uid)
-        if expected is None:
+        pp = p.get("preferred_positions")
+        primary = p.get("preferred_position")
+        if pp is None:
+            fails.append((p.get("name"), "MISSING preferred_positions", primary, pp))
             continue
-        got = p.get("preferred_position")
-        if got != expected:
-            preservation_failures.append(f"{p.get('name')}: expected {expected} got {got}")
-    record(
-        "preferred_position_preserved_in_lineup",
-        len(preservation_failures) == 0,
-        "; ".join(preservation_failures) if preservation_failures else "all positions preserved",
-    )
+        if not isinstance(pp, list):
+            fails.append((p.get("name"), "NOT A LIST", primary, pp))
+            continue
+        if pp and primary != pp[0]:
+            fails.append((p.get("name"), "primary != list[0]", primary, pp))
+    record("T8f team_a + team_b players preserve preferred_positions array (not lost/coerced)",
+           len(fails) == 0, f"issues: {fails}" if fails else "")
 
-    # Specific check: no player has preferred_position == 'ANY' (unless they registered as ANY, none here)
-    coerced_to_any = [p for p in all_players if p.get("preferred_position") == "ANY"]
-    record(
-        "no_player_coerced_to_ANY",
-        len(coerced_to_any) == 0,
-        f"coerced count={len(coerced_to_any)}",
-    )
+    expected_by_name = {name: positions for _, _, _, name, positions in users}
+    value_fails = []
+    for p in all_players:
+        name = p.get("name")
+        if name in expected_by_name:
+            exp = expected_by_name[name]
+            got = p.get("preferred_positions") or []
+            if got != exp:
+                value_fails.append((name, exp, got))
+    record("T8g Exact preferred_positions values preserved per player",
+           len(value_fails) == 0, f"mismatches: {value_fails}" if value_fails else "")
 
-    # Summary
-    print("\n======= SUMMARY =======")
-    passed = sum(1 for _, p, _ in results if p)
-    total = len(results)
-    print(f"Passed {passed}/{total}")
-    for name, ok, detail in results:
-        if not ok:
-            print(f"  FAIL: {name} — {detail}")
+
+def main():
+    print(f"Testing backend @ {API}")
+    token = t1_admin_login()
+    if not token:
+        print("Cannot proceed without admin token")
+        sys.exit(2)
+    t2_two_positions(token)
+    t3_single_position(token)
+    t4_empty_positions(token)
+    t5_too_many_positions(token)
+    t6_legacy_single(token)
+    t7_register_with_positions()
+    t8_and_9_lineup(token)
+
+    print("\n" + "=" * 60)
+    passed = sum(1 for _, ok, _ in results if ok)
+    failed = sum(1 for _, ok, _ in results if not ok)
+    print(f"Total: {len(results)}  Passed: {passed}  Failed: {failed}")
+    if failed:
+        print("\nFailures:")
+        for n, ok, d in results:
+            if not ok:
+                print(f"  ✗ {n}: {d}")
+    sys.exit(0 if failed == 0 else 1)
 
 
 if __name__ == "__main__":
