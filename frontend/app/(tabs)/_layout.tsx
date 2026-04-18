@@ -19,10 +19,11 @@ export default function TabsLayout() {
   }
   if (!user) return <Redirect href="/(auth)/login" />;
 
-  // User request: keep tab bar ~3 cm (≈190 dp) above the Samsung S25 Ultra gesture pill.
+  // User request: push the tab icons further up the screen, clear of Samsung
+  // gesture pill. Larger paddingBottom pushes icons toward the top of the tab bar.
   const bottomInset = insets.bottom;
-  const ANDROID_FLOOR = 200; // ≈ 3 cm of clearance in dp
-  const extraBottom = Platform.OS === 'android' ? Math.max(ANDROID_FLOOR, bottomInset + 120) : bottomInset;
+  const ANDROID_FLOOR = 260; // ≈ 4 cm of clearance in dp
+  const extraBottom = Platform.OS === 'android' ? Math.max(ANDROID_FLOOR, bottomInset + 160) : bottomInset;
   const tabBarHeight = 60 + extraBottom;
   const tabBarPaddingBottom = Math.max(10, extraBottom);
 
