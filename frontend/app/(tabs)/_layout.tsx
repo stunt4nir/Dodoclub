@@ -19,11 +19,14 @@ export default function TabsLayout() {
   }
   if (!user) return <Redirect href="/(auth)/login" />;
 
-  // Respect Android nav / iOS home indicator so tab bar doesn't sit under system keys
+  // Respect Android nav / iOS home indicator so tab bar doesn't sit under system keys.
+  // On Android, safe-area insets can under-report on some OEM skins, so we
+  // enforce a generous minimum breathing room above the system bar.
   const bottomInset = insets.bottom;
-  const extraAndroid = Platform.OS === 'android' ? 8 : 0;
-  const tabBarHeight = 60 + bottomInset + extraAndroid;
-  const tabBarPaddingBottom = Math.max(10, bottomInset) + extraAndroid;
+  const ANDROID_FLOOR = 24; // guaranteed clearance above Android nav keys/gesture pill
+  const extraBottom = Platform.OS === 'android' ? Math.max(ANDROID_FLOOR, bottomInset) : bottomInset;
+  const tabBarHeight = 60 + extraBottom;
+  const tabBarPaddingBottom = Math.max(10, extraBottom);
 
   return (
     <Tabs
