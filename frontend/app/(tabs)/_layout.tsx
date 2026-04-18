@@ -19,10 +19,12 @@ export default function TabsLayout() {
   }
   if (!user) return <Redirect href="/(auth)/login" />;
 
-  // Push icons very high — user's S25 Ultra has persistent overlap with gesture bar.
+  // Edge-to-edge is disabled in app.json so the system nav bar already reserves
+  // its own space. We only need a modest extra margin. Keep a healthy floor for
+  // Samsung devices where inset reporting is inconsistent on Expo Go.
   const bottomInset = insets.bottom;
-  const ANDROID_FLOOR = 500; // very generous clearance
-  const extraBottom = Platform.OS === 'android' ? Math.max(ANDROID_FLOOR, bottomInset + 380) : bottomInset;
+  const ANDROID_FLOOR = 40;
+  const extraBottom = Platform.OS === 'android' ? Math.max(ANDROID_FLOOR, bottomInset + 16) : bottomInset;
   const tabBarHeight = 80 + extraBottom;
   const tabBarPaddingBottom = Math.max(10, extraBottom);
 
