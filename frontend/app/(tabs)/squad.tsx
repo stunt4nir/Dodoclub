@@ -7,10 +7,13 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   RefreshControl,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
+import { Ionicons } from '@expo/vector-icons';
 import { api } from '../../src/api';
+import { useAuth } from '../../src/auth';
 import { colors, spacing, radii } from '../../src/theme';
 import { Display, Overline, Muted } from '../../src/typography';
 import Avatar from '../../src/Avatar';
@@ -37,10 +40,13 @@ type Player = {
 type Tab = 'rating' | 'league';
 
 export default function SquadScreen() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const [players, setPlayers] = useState<Player[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [tab, setTab] = useState<Tab>('rating');
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -59,6 +65,31 @@ export default function SquadScreen() {
       load();
     }, [load])
   );
+
+  const confirmDeletePlayer = useCallback((p: Player) => {
+    Alert.alert(
+      'Delete player?',
+      `This will permanently remove ${p.name} from the squad, wipe their votes, lineup slots, and chat messages. This cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            setDeletingId(p.id);
+            try {
+              await api(`/users/${p.id}`, { method: 'DELETE' });
+              setPlayers((prev) => prev.filter((x) => x.id !== p.id));
+            } catch (e: any) {
+              Alert.alert('Error', e.message || 'Delete failed');
+            } finally {
+              setDeletingId(null);
+            }
+          },
+        },
+      ],
+    );
+  }, []);
 
   if (loading) {
     return (
@@ -169,6 +200,22 @@ export default function SquadScreen() {
                 {tab === 'rating' ? 'RATING' : 'POINTS'}
               </Text>
             </View>
+            {isAdmin && item.id !== user?.id && (
+              <TouchableOpacity
+                testID={`delete-player-${item.id}`}
+                onPress={() => confirmDeletePlayer(item)}
+                disabled={deletingId === item.id}
+                activeOpacity={0.7}
+                style={styles.deleteBtn}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              >
+                {deletingId === item.id ? (
+                  <ActivityIndicator color={colors.danger} size="small" />
+                ) : (
+                  <Ionicons name="trash-outline" size={18} color={colors.danger} />
+                )}
+              </TouchableOpacity>
+            )}
           </View>
         )}
         ListEmptyComponent={
@@ -298,5 +345,16 @@ const styles = StyleSheet.create({
     fontSize: 9,
     fontWeight: '800',
     letterSpacing: 1,
+  },
+  deleteBtn: {
+    marginLeft: spacing.sm,
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
 });

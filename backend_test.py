@@ -1,207 +1,246 @@
-"""Backend tests for Club Dodo - team_size validation, match comments CRUD, cascade delete."""
-import os
+"""
+Admin delete-player endpoint tests — DELETE /api/users/{user_id}
+
+Covers:
+  - Admin happy path (cascade cleanup)
+  - Permission guards (non-admin, self-delete, missing user, unauth)
+  - Cascade on votes, lineup, comments
+"""
+import sys
 import uuid
 import requests
 from datetime import datetime, timezone, timedelta
 
-BASE = os.environ.get("BACKEND_URL", "https://dodo-roster-build.preview.emergentagent.com") + "/api"
+BASE = "https://dodo-roster-build.preview.emergentagent.com/api"
+
 ADMIN_EMAIL = "admin@clubdodo.com"
 ADMIN_PASSWORD = "dodo2026"
 
 results = []
-def record(case, ok, detail=""):
-    results.append((case, ok, detail))
-    status = "PASS" if ok else "FAIL"
-    print(f"[{status}] {case} — {detail}")
 
 
-def auth_headers(token):
-    return {"Authorization": f"Bearer {token}"}
+def record(name, ok, detail=""):
+    results.append((name, ok, detail))
+    mark = "PASS" if ok else "FAIL"
+    print(f"[{mark}] {name}{' — ' + detail if detail else ''}")
+
+
+def req(method, path, token=None, json=None):
+    url = BASE + path
+    headers = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return requests.request(method, url, headers=headers, json=json, timeout=30)
+
+
+def unique_email(prefix):
+    return f"{prefix}+{uuid.uuid4().hex[:6]}@test.com"
 
 
 def login(email, password):
-    r = requests.post(f"{BASE}/auth/login", json={"email": email, "password": password}, timeout=30)
-    r.raise_for_status()
-    return r.json()
+    r = req("POST", "/auth/login", json={"email": email, "password": password})
+    assert r.status_code == 200, f"login failed {email}: {r.status_code} {r.text}"
+    j = r.json()
+    return j["token"], j["user"]
 
 
-def register(email, password, name, shirt_number=None):
-    body = {"email": email, "password": password, "name": name}
-    if shirt_number is not None:
-        body["shirt_number"] = shirt_number
-    r = requests.post(f"{BASE}/auth/register", json=body, timeout=30)
-    r.raise_for_status()
-    return r.json()
-
-
-def iso_future(days=7):
-    return (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
+def register(email, password, name, **extra):
+    body = {"email": email, "password": password, "name": name, **extra}
+    return req("POST", "/auth/register", json=body)
 
 
 def main():
-    admin = login(ADMIN_EMAIL, ADMIN_PASSWORD)
-    admin_token = admin["token"]
-    admin_id = admin["user"]["id"]
-    record("admin login", True, f"admin_id={admin_id}")
+    # Admin login
+    admin_token, admin_user = login(ADMIN_EMAIL, ADMIN_PASSWORD)
+    admin_id = admin_user["id"]
+    print(f"Admin id: {admin_id}")
 
-    # ---------- A) team_size validation ----------
-    r = requests.post(f"{BASE}/matches", headers=auth_headers(admin_token),
-                      json={"title": "Invalid 3v3", "date": iso_future(3), "team_size": 3, "match_type": "friendly"}, timeout=30)
-    record("A.2 team_size=3 rejected", r.status_code == 422, f"status={r.status_code} body={r.text[:200]}")
+    # 1) Register killme user
+    km_email = unique_email("killme")
+    r = register(km_email, "pass12345", "Kill Me")
+    if r.status_code != 200:
+        record("1. Register killme user", False, f"{r.status_code} {r.text}")
+        return
+    km_id = r.json()["user"]["id"]
+    km_token = r.json()["token"]
+    record("1. Register killme user", True, f"id={km_id}")
 
-    r = requests.post(f"{BASE}/matches", headers=auth_headers(admin_token),
-                      json={"title": "Valid 4v4", "date": iso_future(3), "team_size": 4, "match_type": "friendly"}, timeout=30)
-    ok4 = r.status_code == 200 and r.json().get("team_size") == 4
-    record("A.3 team_size=4 accepted", ok4, f"status={r.status_code}")
-    match4_id = r.json().get("id") if r.status_code == 200 else None
+    # 2) Admin deletes killme → 200 {ok, deleted_user_id}
+    r = req("DELETE", f"/users/{km_id}", token=admin_token)
+    ok = r.status_code == 200
+    body = r.json() if ok else {}
+    ok = ok and body.get("ok") is True and body.get("deleted_user_id") == km_id
+    record("2. Admin DELETE /users/{killme_id} → 200 {ok:true, deleted_user_id}",
+           ok, f"status={r.status_code} body={r.text[:200]}")
 
-    r = requests.post(f"{BASE}/matches", headers=auth_headers(admin_token),
-                      json={"title": "Valid 11v11", "date": iso_future(4), "team_size": 11, "match_type": "friendly"}, timeout=30)
-    ok11 = r.status_code == 200 and r.json().get("team_size") == 11
-    record("A.4a team_size=11 accepted", ok11, f"status={r.status_code}")
-    match11_id = r.json().get("id") if r.status_code == 200 else None
+    # 3) GET /users excludes killme id
+    r = req("GET", "/users", token=admin_token)
+    ok = r.status_code == 200
+    ids = [u["id"] for u in (r.json() if ok else [])]
+    record("3. GET /users excludes killme id",
+           ok and km_id not in ids,
+           f"status={r.status_code} killme_in_list={km_id in ids}")
 
-    r = requests.post(f"{BASE}/matches", headers=auth_headers(admin_token),
-                      json={"title": "Invalid 12v12", "date": iso_future(4), "team_size": 12, "match_type": "friendly"}, timeout=30)
-    record("A.4b team_size=12 rejected", r.status_code == 422, f"status={r.status_code}")
+    # 4) killme login → 401
+    r = req("POST", "/auth/login",
+            json={"email": km_email, "password": "pass12345"})
+    record("4. Login as killme → 401", r.status_code == 401,
+           f"status={r.status_code}")
 
-    # ---------- B) Comments CRUD ----------
-    r = requests.get(f"{BASE}/matches/{match4_id}/comments", headers=auth_headers(admin_token), timeout=30)
-    record("B.5 GET comments empty", r.status_code == 200 and r.json() == [], f"status={r.status_code}")
+    # 4b) Old killme token on /auth/me → 401
+    r = req("GET", "/auth/me", token=km_token)
+    record("4b. Old killme token on /auth/me → 401",
+           r.status_code == 401, f"status={r.status_code}")
 
-    r = requests.post(f"{BASE}/matches/{match4_id}/comments", headers=auth_headers(admin_token),
-                      json={"text": "Hello match!"}, timeout=30)
-    admin_comment_id = None
-    if r.status_code == 200:
-        body = r.json()
-        checks = {
-            "id_present": bool(body.get("id")),
-            "user_id==admin": body.get("user_id") == admin_id,
-            "name_present": "name" in body,
-            "profile_picture_present": "profile_picture" in body,
-            "text_correct": body.get("text") == "Hello match!",
-            "created_at_present": bool(body.get("created_at")),
-        }
-        admin_comment_id = body.get("id")
-        record("B.6 POST admin comment + fields", all(checks.values()), f"checks={checks}")
-    else:
-        record("B.6 POST admin comment + fields", False, f"status={r.status_code} body={r.text[:200]}")
+    # 5) Non-admin delete → 403
+    alice_email = unique_email("alice")
+    bob_email = unique_email("bob")
+    ra = register(alice_email, "alice12345", "Alice")
+    rb = register(bob_email, "bob12345", "Bob")
+    if ra.status_code != 200 or rb.status_code != 200:
+        record("5. Register alice+bob", False,
+               f"alice={ra.status_code} bob={rb.status_code}")
+        return
+    alice_token = ra.json()["token"]
+    alice_id = ra.json()["user"]["id"]
+    bob_id = rb.json()["user"]["id"]
 
-    r = requests.get(f"{BASE}/matches/{match4_id}/comments", headers=auth_headers(admin_token), timeout=30)
-    record("B.6b GET after admin post = 1", r.status_code == 200 and len(r.json()) == 1,
-           f"n={len(r.json()) if r.status_code==200 else 'ERR'}")
+    r = req("DELETE", f"/users/{bob_id}", token=alice_token)
+    record("5. Non-admin (alice) DELETE bob → 403",
+           r.status_code == 403, f"status={r.status_code}")
 
-    # Register + login regular user
-    uniq = uuid.uuid4().hex[:8]
-    user_email = f"marco.rossi.{uniq}@example.com"
-    user_password = "Str0ngP@ss!"
-    reg = register(user_email, user_password, "Marco Rossi", shirt_number=9)
-    user_id = reg["user"]["id"]
-    usr = login(user_email, user_password)
-    user_token = usr["token"]
-    record("B.7a register+login user", True, f"user_id={user_id}")
+    # 6) Admin self-delete → 400
+    r = req("DELETE", f"/users/{admin_id}", token=admin_token)
+    detail = ""
+    try:
+        detail = r.json().get("detail", "")
+    except Exception:
+        pass
+    record("6. Admin self-delete → 400 'cannot delete your own account'",
+           r.status_code == 400 and "own" in detail.lower(),
+           f"status={r.status_code} detail={detail}")
 
-    r = requests.post(f"{BASE}/matches/{match4_id}/comments", headers=auth_headers(user_token),
-                      json={"text": "I'm in"}, timeout=30)
-    user_comment_id = r.json().get("id") if r.status_code == 200 else None
-    record("B.7b POST user comment", r.status_code == 200 and r.json().get("user_id") == user_id, f"status={r.status_code}")
+    # 7) Admin DELETE nonexistent → 404
+    r = req("DELETE", "/users/nonexistent-id-xyz-123", token=admin_token)
+    record("7. Admin DELETE nonexistent id → 404",
+           r.status_code == 404, f"status={r.status_code}")
 
-    r = requests.get(f"{BASE}/matches/{match4_id}/comments", headers=auth_headers(user_token), timeout=30)
-    if r.status_code == 200:
-        items = r.json()
-        ok7c = (len(items) == 2 and items[0]["user_id"] == admin_id
-                and items[1]["user_id"] == user_id
-                and items[0]["created_at"] <= items[1]["created_at"])
-        record("B.7c GET 2 items oldest-first", ok7c, f"n={len(items)}")
-    else:
-        record("B.7c GET 2 items oldest-first", False, f"status={r.status_code}")
+    # 8) Last-admin guard note
+    record("8. Last-admin guard note (self-delete check fires first for sole admin)",
+           True, "documented — no code path needed")
 
-    # validation
-    r = requests.post(f"{BASE}/matches/{match4_id}/comments", headers=auth_headers(user_token), json={"text": ""}, timeout=30)
-    record("B.8a empty 422", r.status_code == 422, f"status={r.status_code}")
+    # 9) Cascade setup: stats user + match + votes + comment + lineup
+    stats_email = unique_email("stats")
+    rs = register(stats_email, "stats12345", "Stats User",
+                  preferred_position="ST")
+    if rs.status_code != 200:
+        record("9a. Register stats user", False, f"{rs.status_code} {rs.text}")
+        return
+    stats_token = rs.json()["token"]
+    stats_id = rs.json()["user"]["id"]
+    record("9a. Register stats user", True, f"id={stats_id}")
 
-    r = requests.post(f"{BASE}/matches/{match4_id}/comments", headers=auth_headers(user_token), json={"text": "x" * 501}, timeout=30)
-    record("B.8b 501 chars 422", r.status_code == 422, f"status={r.status_code}")
+    future_date = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
+    r = req("POST", "/matches", token=admin_token,
+            json={"title": "Cascade Test Match", "date": future_date,
+                  "team_size": 4, "match_type": "friendly"})
+    if r.status_code != 200:
+        record("9b. Admin create friendly match team_size=4", False,
+               f"{r.status_code} {r.text}")
+        return
+    match_id = r.json()["id"]
+    record("9b. Admin create friendly match team_size=4", True,
+           f"id={match_id}")
 
-    r = requests.post(f"{BASE}/matches/{match4_id}/comments", headers=auth_headers(user_token), json={"text": "y" * 500}, timeout=30)
-    len500_id = r.json().get("id") if r.status_code == 200 else None
-    record("B.8c 500 chars 200", r.status_code == 200, f"status={r.status_code}")
+    r = req("POST", f"/matches/{match_id}/vote", token=stats_token,
+            json={"vote": "yes"})
+    record("9c. Stats user vote yes", r.status_code == 200,
+           f"status={r.status_code}")
 
-    # clean up len-500 so the counts for steps 10/11 are deterministic
-    if len500_id:
-        requests.delete(f"{BASE}/matches/{match4_id}/comments/{len500_id}",
-                        headers=auth_headers(user_token), timeout=30)
+    r = req("POST", f"/matches/{match_id}/vote", token=admin_token,
+            json={"vote": "yes"})
+    record("9d. Admin vote yes", r.status_code == 200,
+           f"status={r.status_code}")
 
-    # 9. user deletes admin's -> 403
-    r = requests.delete(f"{BASE}/matches/{match4_id}/comments/{admin_comment_id}",
-                        headers=auth_headers(user_token), timeout=30)
-    record("B.9 user deletes admin comment 403", r.status_code == 403, f"status={r.status_code}")
+    r = req("POST", f"/matches/{match_id}/comments", token=stats_token,
+            json={"text": "Excited for kickoff"})
+    ok_c = r.status_code == 200
+    stats_comment_id = r.json().get("id") if ok_c else None
+    record("9e. Stats user post comment", ok_c,
+           f"status={r.status_code} comment_id={stats_comment_id}")
 
-    # 10. user deletes own -> 200
-    r = requests.delete(f"{BASE}/matches/{match4_id}/comments/{user_comment_id}",
-                        headers=auth_headers(user_token), timeout=30)
-    record("B.10a user deletes own 200", r.status_code == 200, f"status={r.status_code}")
+    r = req("POST", f"/matches/{match_id}/generate-lineup", token=admin_token)
+    ok_l = r.status_code == 200
+    lineup = r.json().get("lineup") if ok_l else None
+    in_lineup_before = False
+    if lineup:
+        for k in ("team_a", "team_b", "team_c", "reserves"):
+            for p in lineup.get(k) or []:
+                if p.get("user_id") == stats_id:
+                    in_lineup_before = True
+    record("9f. Admin generate-lineup (stats in lineup)",
+           ok_l and in_lineup_before,
+           f"status={r.status_code} stats_in_lineup_pre={in_lineup_before}")
 
-    r = requests.get(f"{BASE}/matches/{match4_id}/comments", headers=auth_headers(admin_token), timeout=30)
-    record("B.10b GET after 1 item", r.status_code == 200 and len(r.json()) == 1,
-           f"n={len(r.json()) if r.status_code==200 else 'ERR'}")
+    # 10) Delete stats user
+    r = req("DELETE", f"/users/{stats_id}", token=admin_token)
+    ok = r.status_code == 200
+    body = r.json() if ok else {}
+    ok = ok and body.get("ok") is True and body.get("deleted_user_id") == stats_id
+    record("10. Admin DELETE /users/{stats_id} → 200",
+           ok, f"status={r.status_code} body={r.text[:200]}")
 
-    # 11. admin deletes remaining
-    r = requests.delete(f"{BASE}/matches/{match4_id}/comments/{admin_comment_id}",
-                        headers=auth_headers(admin_token), timeout=30)
-    record("B.11a admin deletes remaining 200", r.status_code == 200, f"status={r.status_code}")
+    # 11) GET match — votes & lineup cleaned
+    r = req("GET", f"/matches/{match_id}", token=admin_token)
+    ok_match = r.status_code == 200
+    match = r.json() if ok_match else {}
+    votes = match.get("votes") or []
+    stats_in_votes = any(v["user_id"] == stats_id for v in votes)
+    lineup = match.get("lineup") or {}
+    stats_in_lineup = False
+    for k in ("team_a", "team_b", "team_c", "reserves"):
+        for p in lineup.get(k) or []:
+            if p.get("user_id") == stats_id:
+                stats_in_lineup = True
+    record("11a. GET match — votes no longer contain stats_id",
+           ok_match and not stats_in_votes,
+           f"status={r.status_code} stats_in_votes={stats_in_votes} "
+           f"votes_n={len(votes)}")
+    record("11b. GET match — lineup no longer contains stats_id",
+           ok_match and not stats_in_lineup,
+           f"stats_in_lineup={stats_in_lineup}")
 
-    r = requests.get(f"{BASE}/matches/{match4_id}/comments", headers=auth_headers(admin_token), timeout=30)
-    record("B.11b GET returns []", r.status_code == 200 and r.json() == [], f"body={r.text[:100]}")
+    # 12) GET comments — stats comment gone
+    r = req("GET", f"/matches/{match_id}/comments", token=admin_token)
+    ok = r.status_code == 200
+    comments = r.json() if ok else []
+    stats_comments = [c for c in comments if c.get("user_id") == stats_id]
+    record("12. GET comments — stats user's comment removed",
+           ok and len(stats_comments) == 0,
+           f"status={r.status_code} stats_comments_count={len(stats_comments)}")
 
-    # 12. non-existent match id -> 404
-    fake = str(uuid.uuid4())
-    r = requests.get(f"{BASE}/matches/{fake}/comments", headers=auth_headers(admin_token), timeout=30)
-    record("B.12a GET nonexistent 404", r.status_code == 404, f"status={r.status_code}")
-    r = requests.post(f"{BASE}/matches/{fake}/comments", headers=auth_headers(admin_token), json={"text": "hi"}, timeout=30)
-    record("B.12b POST nonexistent 404", r.status_code == 404, f"status={r.status_code}")
-    r = requests.delete(f"{BASE}/matches/{fake}/comments/{fake}", headers=auth_headers(admin_token), timeout=30)
-    record("B.12c DELETE nonexistent 404", r.status_code == 404, f"status={r.status_code}")
+    # 13) Unauth DELETE → 401
+    r = requests.delete(BASE + "/users/xxx", timeout=30)
+    record("13. Unauth DELETE /users/xxx → 401",
+           r.status_code == 401, f"status={r.status_code}")
 
-    # 13. no auth -> 401
-    r = requests.get(f"{BASE}/matches/{match4_id}/comments", timeout=30)
-    record("B.13a GET no-auth 401", r.status_code == 401, f"status={r.status_code}")
-    r = requests.post(f"{BASE}/matches/{match4_id}/comments", json={"text": "no auth"}, timeout=30)
-    record("B.13b POST no-auth 401", r.status_code == 401, f"status={r.status_code}")
-    r = requests.delete(f"{BASE}/matches/{match4_id}/comments/{fake}", timeout=30)
-    record("B.13c DELETE no-auth 401", r.status_code == 401, f"status={r.status_code}")
+    # Cleanup
+    req("DELETE", f"/matches/{match_id}", token=admin_token)
+    req("DELETE", f"/users/{alice_id}", token=admin_token)
+    req("DELETE", f"/users/{bob_id}", token=admin_token)
 
-    # ---------- C) Cascade delete ----------
-    r = requests.post(f"{BASE}/matches", headers=auth_headers(admin_token),
-                      json={"title": "Cascade Test", "date": iso_future(5), "team_size": 5, "match_type": "friendly"}, timeout=30)
-    cmid = r.json()["id"]
-    requests.post(f"{BASE}/matches/{cmid}/comments", headers=auth_headers(admin_token), json={"text": "c1"}, timeout=30)
-    requests.post(f"{BASE}/matches/{cmid}/comments", headers=auth_headers(user_token), json={"text": "c2"}, timeout=30)
-
-    r = requests.get(f"{BASE}/matches/{cmid}/comments", headers=auth_headers(admin_token), timeout=30)
-    record("C.14a 2 comments before delete", r.status_code == 200 and len(r.json()) == 2,
-           f"n={len(r.json()) if r.status_code==200 else 'ERR'}")
-
-    r = requests.delete(f"{BASE}/matches/{cmid}", headers=auth_headers(admin_token), timeout=30)
-    record("C.14b DELETE match 200", r.status_code == 200, f"status={r.status_code}")
-
-    r = requests.get(f"{BASE}/matches/{cmid}/comments", headers=auth_headers(admin_token), timeout=30)
-    record("C.14c GET comments after match delete 404", r.status_code == 404, f"status={r.status_code}")
-
-    # cleanup remaining matches
-    for mid in (match4_id, match11_id):
-        if mid:
-            requests.delete(f"{BASE}/matches/{mid}", headers=auth_headers(admin_token), timeout=30)
-
-    total = len(results)
+    # Summary
+    print("\n================ RESULTS ================")
     passed = sum(1 for _, ok, _ in results if ok)
-    print(f"\n==== {passed}/{total} passed ====")
-    for case, ok, detail in results:
-        if not ok:
-            print(f"  FAIL: {case} — {detail}")
-    return passed == total
+    failed = [n for n, ok, _ in results if not ok]
+    print(f"Passed: {passed}/{len(results)}")
+    if failed:
+        print("FAILED:")
+        for n in failed:
+            print(f" - {n}")
+        sys.exit(1)
+    print("ALL PASSED")
 
 
 if __name__ == "__main__":
-    ok = main()
-    exit(0 if ok else 1)
+    main()

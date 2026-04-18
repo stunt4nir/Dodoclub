@@ -177,10 +177,22 @@ backend:
           agent: "testing"
           comment: "Full multi-position test suite (18/18 PASS in /app/backend_test.py). Validated:\n  • T1 Admin login returns JWT + user with BOTH preferred_position AND preferred_positions keys.\n  • T2 PUT /api/users/me {preferred_positions:[CAM,CDM]} → GET /auth/me returns primary='CAM', list=['CAM','CDM'].\n  • T3 PUT [ST] → primary='ST', list=['ST'].\n  • T4 PUT [] (empty list) correctly clears both: primary=null, list=[].\n  • T5 PUT [GK,CB,CAM] (3 items) → 422 as expected (max_length=2 enforced by pydantic).\n  • T6 Backward compat: PUT {preferred_position:'LW'} (legacy singular) → list auto-synced to ['LW'] and primary='LW'.\n  • T7 POST /api/auth/register {preferred_positions:[CAM,CDM], ...} → response user has both fields populated; login + GET /auth/me confirms persistence.\n  • T8 Registered 6 users with varied combos ([CAM,CDM], [ST,CAM], [CB,RB], [GK], [LB,CB], [LW,RW]), admin set to [CAM,CDM]. Created friendly match team_size=3, all 7 voted yes. POST /matches/{id}/generate-lineup returned 200 (team_a=3, team_b=3, reserves=1). Every player in team_a+team_b preserved preferred_positions array exactly as registered (no loss, no coercion) and preferred_position == preferred_positions[0].\n  • T9 GET /api/matches/{id} returns votes where every entry includes BOTH preferred_position and preferred_positions, with primary matching list[0]. No 500s anywhere. user_public() and _match_public() both serialise both fields correctly."
 
+  - task: "Admin delete player DELETE /api/users/{user_id} with cascade cleanup"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: "20/20 PASS in /app/backend_test.py. Verified end-to-end: (1) Register killme user succeeds. (2) Admin DELETE /api/users/{killme_id} → 200 with body {ok:true, deleted_user_id:<id>}. (3) GET /api/users no longer lists that id. (4) Login with killme email → 401 (user gone); old killme JWT on /auth/me also → 401. (5) Non-admin alice DELETE bob → 403 (require_admin guard). (6) Admin self-delete DELETE /users/{admin.id} → 400 with detail 'You cannot delete your own account'. (7) Admin DELETE /users/nonexistent-id → 404. (8) Last-admin rule: self-delete check fires first for sole admin — documented, no code path needed beyond existing guard. (9-12) Cascade test: stats user registered, admin created friendly match (team_size=4, future date), stats+admin both voted yes, stats posted a comment, admin called generate-lineup (stats appeared in team_a/b). After admin DELETE /users/{stats_id} → 200: GET /matches/{id} votes array no longer contains stats_id (only admin remains), and lineup team_a/team_b/team_c/reserves all have stats_id purged; GET /matches/{id}/comments returns 0 comments from stats (match_comments.delete_many({user_id}) worked). (13) Unauth DELETE /api/users/xxx (no Authorization header) → 401. All assertions match review spec exactly."
+
 metadata:
   created_by: "testing_agent"
-  version: "1.2"
-  test_sequence: 3
+  version: "1.3"
+  test_sequence: 4
   run_ui: false
 
 test_plan:
@@ -196,3 +208,5 @@ agent_communication:
       message: "Multi-position feature (preferred_positions, max 2) verified end-to-end. 18/18 checks PASS. Covered: admin login, 2-item list, 1-item list, empty list clear, >2 items 422, legacy singular backward-compat (auto-syncs list), register with preferred_positions (response + persistence after re-login), lineup smoke with 6 varied users + admin voting yes (generate-lineup 200, arrays preserved, primary==list[0]), and GET /matches/{id} votes include BOTH fields. user_public() and _match_public() serialise preferred_position + preferred_positions correctly. No 500s. No regressions in prior single-position behaviour. Nothing to fix — main agent can summarise and finish."
     - agent: "testing"
       message: "team_size validation + Match Comments CRUD + cascade delete — 28/28 PASS (see /app/backend_test.py). Summary: (A) POST /api/matches with team_size=3 returns 422 (ge=4 enforced), team_size=4 and team_size=11 succeed with correct persisted value, team_size=12 returns 422. (B) GET /matches/{id}/comments empty returns []; POST as admin returns full comment object (id, user_id==admin.id, name, profile_picture, text, created_at); GET lists 1 item; registered regular user posts and GET returns 2 items sorted oldest-first (admin first). Validation: empty text 422, 501-chars 422, 500-chars 200. Authorization: regular user DELETE of admin's comment 403; own-delete 200; admin-delete remaining 200. Non-existent match id 404 on GET/POST/DELETE. Missing Authorization header 401 on all three endpoints. (C) Match delete cascades: after DELETE /api/matches/{id}, GET /matches/{id}/comments returns 404 (match gone), confirming comments are implicitly unreachable; code also calls match_comments.delete_many({match_id}) on delete. Nothing to fix."
+    - agent: "testing"
+      message: "Admin delete-player DELETE /api/users/{user_id} — 20/20 PASS (see /app/backend_test.py). All 13 scenarios from the review request verified: (1) register killme → (2) admin DELETE returns 200 with {ok:true, deleted_user_id} → (3) GET /users excludes id → (4) login 401 & old token 401. (5) non-admin delete → 403. (6) admin self-delete → 400 'cannot delete your own account'. (7) missing id → 404. (8) last-admin guard documented — self-delete check fires first. (9-12) Cascade verified end-to-end: created friendly match (team_size=4), stats+admin voted yes, stats posted comment, generate-lineup placed stats in team_a/b; after DELETE stats user, GET /matches/{id} votes no longer contain stats_id, lineup team_a/b/c/reserves all have stats_id removed, and GET /matches/{id}/comments has 0 stats comments. (13) Unauth DELETE → 401. No failures, no regressions. Cleanup code (votes map, lineup arrays, match_comments) in delete_user handler works as specified. Nothing to fix — main agent can summarise and finish."

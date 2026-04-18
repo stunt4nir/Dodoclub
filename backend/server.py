@@ -408,6 +408,49 @@ async def grant_edit(data: GrantEditIn, admin=Depends(require_admin)):
     return user_public(u)
 
 
+@api.delete("/users/{user_id}")
+async def delete_user(user_id: str, admin=Depends(require_admin)):
+    """Admin-only: remove a player from the squad. Cleans up their votes,
+    lineup slots, and chat messages to avoid orphaned references. Protects
+    the last admin and the acting admin from self-deletion."""
+    target = await db.users.find_one({"id": user_id}, {"_id": 0})
+    if not target:
+        raise HTTPException(404, "User not found")
+    if target["id"] == admin["id"]:
+        raise HTTPException(400, "You cannot delete your own account")
+    if target.get("role") == "admin":
+        admin_count = await db.users.count_documents({"role": "admin"})
+        if admin_count <= 1:
+            raise HTTPException(400, "Cannot delete the last remaining admin")
+
+    # Clean up references in matches (votes map + lineup arrays)
+    async for m in db.matches.find({}, {"_id": 0}):
+        changed = False
+        votes = m.get("votes", {}) or {}
+        if user_id in votes:
+            votes.pop(user_id, None)
+            changed = True
+        lineup = m.get("lineup")
+        if isinstance(lineup, dict):
+            for k in ("team_a", "team_b", "team_c", "reserves"):
+                arr = lineup.get(k) or []
+                new_arr = [p for p in arr if (p or {}).get("user_id") != user_id]
+                if len(new_arr) != len(arr):
+                    lineup[k] = new_arr
+                    changed = True
+        if changed:
+            await db.matches.update_one(
+                {"id": m["id"]},
+                {"$set": {"votes": votes, "lineup": lineup}},
+            )
+
+    # Wipe their chat messages
+    await db.match_comments.delete_many({"user_id": user_id})
+
+    await db.users.delete_one({"id": user_id})
+    return {"ok": True, "deleted_user_id": user_id}
+
+
 # ---------- Club Config ----------
 @api.get("/config")
 async def get_config():
