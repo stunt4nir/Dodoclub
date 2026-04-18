@@ -19,15 +19,15 @@ export default function TabsLayout() {
   }
   if (!user) return <Redirect href="/(auth)/login" />;
 
-  // Edge-to-edge is disabled in app.json so the system nav bar already reserves
-  // its own space. Minimal extra padding to keep tab bar close to system bar.
+  // Edge-to-edge is disabled. The tab bar can't go physically below the system
+  // nav bar, so "lowering" means shrinking the tab-bar height so its top edge
+  // moves down (~1 cm ≈ 60 dp less height).
   const bottomInset = insets.bottom;
   const ANDROID_FLOOR = 0;
   const extraBottom = Platform.OS === 'android' ? Math.max(ANDROID_FLOOR, bottomInset) : bottomInset;
-  const tabBarHeight = 64 + extraBottom;
-  const tabBarPaddingBottom = Math.max(4, extraBottom);
-
-  const ICON_SIZE = 32;
+  // ~1 cm shorter than before (64 -> 40); icons shift visually downward.
+  const tabBarHeight = 40 + extraBottom;
+  const tabBarPaddingBottom = Math.max(0, extraBottom);
 
   return (
     <Tabs
@@ -39,16 +39,16 @@ export default function TabsLayout() {
           borderTopWidth: 1,
           height: tabBarHeight,
           paddingBottom: tabBarPaddingBottom,
-          paddingTop: 10,
+          paddingTop: 2,
         },
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.textMuted,
         tabBarLabelStyle: {
-          fontSize: 12,
+          fontSize: 11,
           fontWeight: '800',
-          letterSpacing: 1.2,
+          letterSpacing: 1,
           textTransform: 'uppercase',
-          marginTop: 2,
+          marginTop: 0,
         },
         tabBarIconStyle: {
           marginBottom: 0,
@@ -60,7 +60,7 @@ export default function TabsLayout() {
         options={{
           title: 'Home',
           tabBarIcon: ({ color }) => (
-            <Ionicons name="football-outline" size={ICON_SIZE} color={color} />
+            <Ionicons name="football-outline" size={24} color={color} />
           ),
           tabBarButtonTestID: 'nav-home-tab',
         }}
@@ -70,7 +70,7 @@ export default function TabsLayout() {
         options={{
           title: 'Squad',
           tabBarIcon: ({ color }) => (
-            <Ionicons name="people-outline" size={ICON_SIZE} color={color} />
+            <Ionicons name="people-outline" size={24} color={color} />
           ),
           tabBarButtonTestID: 'nav-squad-tab',
         }}
@@ -80,7 +80,7 @@ export default function TabsLayout() {
         options={{
           title: 'Matches',
           tabBarIcon: ({ color }) => (
-            <Ionicons name="calendar-outline" size={ICON_SIZE} color={color} />
+            <Ionicons name="calendar-outline" size={24} color={color} />
           ),
           tabBarButtonTestID: 'nav-matches-tab',
         }}
@@ -90,7 +90,7 @@ export default function TabsLayout() {
         options={{
           title: 'Profile',
           tabBarIcon: ({ color }) => (
-            <Ionicons name="person-circle-outline" size={ICON_SIZE} color={color} />
+            <Ionicons name="person-circle-outline" size={24} color={color} />
           ),
           tabBarButtonTestID: 'nav-profile-tab',
         }}
