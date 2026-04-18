@@ -19,12 +19,14 @@ export default function TabsLayout() {
   }
   if (!user) return <Redirect href="/(auth)/login" />;
 
-  // User request: push tab icons significantly higher up the screen.
+  // Tuned for Samsung S25 Ultra: clear of gesture pill with larger icons.
   const bottomInset = insets.bottom;
-  const ANDROID_FLOOR = 340; // ≈ 5+ cm of clearance in dp
-  const extraBottom = Platform.OS === 'android' ? Math.max(ANDROID_FLOOR, bottomInset + 220) : bottomInset;
-  const tabBarHeight = 60 + extraBottom;
+  const ANDROID_FLOOR = 180; // solid clearance above gesture pill, not excessive
+  const extraBottom = Platform.OS === 'android' ? Math.max(ANDROID_FLOOR, bottomInset + 100) : bottomInset;
+  const tabBarHeight = 80 + extraBottom;
   const tabBarPaddingBottom = Math.max(10, extraBottom);
+
+  const ICON_SIZE = 32;
 
   return (
     <Tabs
@@ -36,15 +38,19 @@ export default function TabsLayout() {
           borderTopWidth: 1,
           height: tabBarHeight,
           paddingBottom: tabBarPaddingBottom,
-          paddingTop: 6,
+          paddingTop: 10,
         },
         tabBarActiveTintColor: colors.primary,
         tabBarInactiveTintColor: colors.textMuted,
         tabBarLabelStyle: {
-          fontSize: 11,
+          fontSize: 12,
           fontWeight: '800',
           letterSpacing: 1.2,
           textTransform: 'uppercase',
+          marginTop: 2,
+        },
+        tabBarIconStyle: {
+          marginBottom: 0,
         },
       }}
     >
@@ -52,8 +58,8 @@ export default function TabsLayout() {
         name="index"
         options={{
           title: 'Home',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="football-outline" size={size} color={color} />
+          tabBarIcon: ({ color }) => (
+            <Ionicons name="football-outline" size={ICON_SIZE} color={color} />
           ),
           tabBarButtonTestID: 'nav-home-tab',
         }}
@@ -62,8 +68,8 @@ export default function TabsLayout() {
         name="squad"
         options={{
           title: 'Squad',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="people-outline" size={size} color={color} />
+          tabBarIcon: ({ color }) => (
+            <Ionicons name="people-outline" size={ICON_SIZE} color={color} />
           ),
           tabBarButtonTestID: 'nav-squad-tab',
         }}
@@ -72,8 +78,8 @@ export default function TabsLayout() {
         name="matches"
         options={{
           title: 'Matches',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="calendar-outline" size={size} color={color} />
+          tabBarIcon: ({ color }) => (
+            <Ionicons name="calendar-outline" size={ICON_SIZE} color={color} />
           ),
           tabBarButtonTestID: 'nav-matches-tab',
         }}
@@ -82,8 +88,8 @@ export default function TabsLayout() {
         name="profile"
         options={{
           title: 'Profile',
-          tabBarIcon: ({ color, size }) => (
-            <Ionicons name="person-circle-outline" size={size} color={color} />
+          tabBarIcon: ({ color }) => (
+            <Ionicons name="person-circle-outline" size={ICON_SIZE} color={color} />
           ),
           tabBarButtonTestID: 'nav-profile-tab',
         }}
