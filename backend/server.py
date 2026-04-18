@@ -144,10 +144,18 @@ class MatchCreate(BaseModel):
     team_size: int = Field(default=5, ge=3, le=11)
     match_type: Literal["friendly", "league"] = "friendly"
     third_team_enabled: bool = False
+    duration_minutes: int = Field(default=60, ge=10, le=180)
 
 
 class VoteIn(BaseModel):
     vote: Literal["yes", "no", "reserve"]
+
+
+class LineupOverrideIn(BaseModel):
+    team_a: List[str] = []
+    team_b: List[str] = []
+    team_c: List[str] = []
+    reserves: List[str] = []
 
 
 class PlayerStatLine(BaseModel):
@@ -405,6 +413,9 @@ def _match_public(m: dict, users_by_id: dict) -> dict:
         "team_size": m.get("team_size", 5),
         "match_type": m.get("match_type", "friendly"),
         "third_team_enabled": m.get("third_team_enabled", False),
+        "duration_minutes": m.get("duration_minutes", 60),
+        "timer_started_at": m.get("timer_started_at"),
+        "timer_ended_at": m.get("timer_ended_at"),
         "status": m.get("status", "voting"),
         "created_by": m.get("created_by"),
         "created_at": m.get("created_at"),
@@ -430,12 +441,15 @@ async def create_match(data: MatchCreate, user=Depends(get_current_user)):
         "team_size": data.team_size,
         "match_type": data.match_type,
         "third_team_enabled": data.third_team_enabled,
+        "duration_minutes": data.duration_minutes,
         "status": "voting",
         "created_by": user["id"],
         "created_at": datetime.now(timezone.utc).isoformat(),
         "votes": {},
         "lineup": None,
         "result": None,
+        "timer_started_at": None,
+        "timer_ended_at": None,
     }
     await db.matches.insert_one(doc)
     umap = await _users_map()
@@ -560,6 +574,126 @@ async def generate_lineup(mid: str, user=Depends(require_editor)):
         update["third_team_enabled"] = True
     await db.matches.update_one({"id": mid}, {"$set": update})
     m = await db.matches.find_one({"id": mid}, {"_id": 0})
+    return _match_public(m, umap)
+
+
+def _player_mini(u: dict) -> dict:
+    return {
+        "user_id": u["id"],
+        "name": u.get("name"),
+        "shirt_number": u.get("shirt_number"),
+        "profile_picture": u.get("profile_picture"),
+        "preferred_position": u.get("preferred_position"),
+        "rating": compute_rating(
+            u.get("goals", 0),
+            u.get("assists", 0),
+            u.get("matches_played", 0),
+        ),
+        "vote": "yes",
+    }
+
+
+@api.put("/matches/{mid}/lineup")
+async def override_lineup(
+    mid: str, data: LineupOverrideIn, user=Depends(require_editor)
+):
+    """Manual override of a match lineup. Editor provides arrays of user_ids
+    per team; the server rehydrates them into player objects."""
+    m = await db.matches.find_one({"id": mid}, {"_id": 0})
+    if not m:
+        raise HTTPException(404, "Match not found")
+    umap = await _users_map()
+    votes = m.get("votes", {})
+
+    def hydrate(uids: List[str]) -> List[dict]:
+        out = []
+        for uid in uids:
+            u = umap.get(uid)
+            if not u:
+                continue
+            mini = _player_mini(u)
+            # preserve original vote if it exists
+            mini["vote"] = votes.get(uid, "yes")
+            out.append(mini)
+        return out
+
+    team_a = hydrate(data.team_a)
+    team_b = hydrate(data.team_b)
+    team_c = hydrate(data.team_c)
+    reserves = hydrate(data.reserves)
+
+    # Validate no duplicates across teams
+    seen = set()
+    for roster in (team_a, team_b, team_c, reserves):
+        for p in roster:
+            if p["user_id"] in seen:
+                raise HTTPException(400, f"Player {p['name']} appears in multiple teams")
+            seen.add(p["user_id"])
+
+    # Enforce team_size caps (reserves unlimited)
+    ts = m.get("team_size", 5)
+    for label, roster in (("Team Red", team_a), ("Team Black", team_b), ("Team White", team_c)):
+        if len(roster) > ts:
+            raise HTTPException(400, f"{label} exceeds team size ({len(roster)} > {ts})")
+
+    lineup = {
+        "team_a": team_a,
+        "team_b": team_b,
+        "team_c": team_c,
+        "reserves": reserves,
+        "team_size": ts,
+        "third_team_enabled": len(team_c) > 0,
+    }
+    update = {"lineup": lineup}
+    if m.get("status") == "voting":
+        update["status"] = "scheduled"
+    if len(team_c) > 0 and not m.get("third_team_enabled"):
+        update["third_team_enabled"] = True
+    await db.matches.update_one({"id": mid}, {"$set": update})
+    m = await db.matches.find_one({"id": mid}, {"_id": 0})
+    return _match_public(m, umap)
+
+
+@api.post("/matches/{mid}/timer/start")
+async def start_timer(mid: str, user=Depends(require_editor)):
+    m = await db.matches.find_one({"id": mid}, {"_id": 0})
+    if not m:
+        raise HTTPException(404, "Match not found")
+    now = datetime.now(timezone.utc).isoformat()
+    await db.matches.update_one(
+        {"id": mid},
+        {"$set": {"timer_started_at": now, "timer_ended_at": None}},
+    )
+    m = await db.matches.find_one({"id": mid}, {"_id": 0})
+    umap = await _users_map()
+    return _match_public(m, umap)
+
+
+@api.post("/matches/{mid}/timer/stop")
+async def stop_timer(mid: str, user=Depends(require_editor)):
+    m = await db.matches.find_one({"id": mid}, {"_id": 0})
+    if not m:
+        raise HTTPException(404, "Match not found")
+    now = datetime.now(timezone.utc).isoformat()
+    await db.matches.update_one(
+        {"id": mid}, {"$set": {"timer_ended_at": now}}
+    )
+    m = await db.matches.find_one({"id": mid}, {"_id": 0})
+    umap = await _users_map()
+    return _match_public(m, umap)
+
+
+@api.post("/matches/{mid}/timer/reset")
+async def reset_timer(mid: str, user=Depends(require_editor)):
+    m = await db.matches.find_one({"id": mid}, {"_id": 0})
+    if not m:
+        raise HTTPException(404, "Match not found")
+    await db.matches.update_one(
+        {"id": mid},
+        {"$set": {"timer_started_at": None, "timer_ended_at": None}},
+    )
+    m = await db.matches.find_one({"id": mid}, {"_id": 0})
+    umap = await _users_map()
     return _match_public(m, umap)
 
 

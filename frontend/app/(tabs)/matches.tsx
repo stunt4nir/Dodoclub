@@ -85,6 +85,7 @@ export default function MatchesScreen() {
   const [dateOffset, setDateOffset] = useState(3); // days
   const [hour, setHour] = useState('19');
   const [minute, setMinute] = useState('00');
+  const [duration, setDuration] = useState(60);
 
   const canEdit = !!user && (user.role === 'admin' || user.can_edit_matches);
 
@@ -115,6 +116,7 @@ export default function MatchesScreen() {
     setDateOffset(3);
     setHour('19');
     setMinute('00');
+    setDuration(60);
   };
 
   const createMatch = async () => {
@@ -154,6 +156,7 @@ export default function MatchesScreen() {
           team_size: ts,
           match_type: matchType,
           third_team_enabled: thirdTeam,
+          duration_minutes: duration,
         },
       });
       resetForm();
@@ -504,6 +507,28 @@ export default function MatchesScreen() {
                       ]}
                     >
                       :{m}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <Text style={[styles.label, { marginTop: spacing.md }]}>MATCH DURATION</Text>
+              <View style={styles.row}>
+                {[30, 45, 60, 75, 90].map((n) => (
+                  <TouchableOpacity
+                    key={n}
+                    testID={`duration-${n}-btn`}
+                    onPress={() => setDuration(n)}
+                    style={[styles.choice, duration === n && styles.choiceActive]}
+                    activeOpacity={0.8}
+                  >
+                    <Text
+                      style={[
+                        styles.choiceText,
+                        duration === n && styles.choiceTextActive,
+                      ]}
+                    >
+                      {n} min
                     </Text>
                   </TouchableOpacity>
                 ))}

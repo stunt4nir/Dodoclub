@@ -1,0 +1,109 @@
+{
+  "summary": "Backend testing complete - All 81 tests passed (60 existing + 21 new iteration 5 tests). Comprehensive testing of match duration customization (10-180 minutes), timer controls (start/stop/reset), and manual lineup override with team validation.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iteration5_timer_lineup.py",
+    "/app/test_reports/pytest/pytest_results_iteration5.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "✅ MatchCreate accepts duration_minutes (default=60, ge=10, le=180) - validated via Pydantic",
+    "✅ POST /api/matches persists duration_minutes to match document and returns it in response",
+    "✅ GET /api/matches/{id} returns duration_minutes, timer_started_at (null initially), timer_ended_at (null initially)",
+    "✅ POST /api/matches/{id}/timer/start sets timer_started_at=<ISO datetime now>, timer_ended_at=null",
+    "✅ POST /api/matches/{id}/timer/stop sets timer_ended_at=<ISO datetime now>, preserves timer_started_at",
+    "✅ POST /api/matches/{id}/timer/reset clears both timer_started_at and timer_ended_at (sets to null)",
+    "✅ All timer endpoints (start/stop/reset) require editor role via require_editor dependency",
+    "✅ Non-editor users receive 403 Forbidden on all timer endpoints",
+    "✅ PUT /api/matches/{id}/lineup accepts LineupOverrideIn schema: {team_a, team_b, team_c, reserves} as user_id arrays",
+    "✅ Lineup override rehydrates each user_id into player object with {user_id, name, shirt_number, profile_picture, preferred_position, rating, vote}",
+    "✅ Original vote preserved if user had voted, defaults to 'yes' otherwise",
+    "✅ Lineup override validates no duplicate user across teams (400 error with descriptive message)",
+    "✅ Lineup override enforces team_size cap on team_a, team_b, team_c (400 error if exceeded)",
+    "✅ Reserves array has no size limit (can hold overflow players)",
+    "✅ Lineup override with team_c containing players auto-sets match.third_team_enabled=true",
+    "✅ Lineup override with empty arrays works (can reset/clear lineup)",
+    "✅ Lineup override sets status='scheduled' if match was in 'voting' status",
+    "✅ PUT /api/matches/{id}/lineup requires editor role (403 for non-editors)",
+    "✅ No regressions - all 60 existing tests still pass (auth, forgot-password, users, config, matches, league, lineup algorithm)"
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iteration5_timer_lineup.py"
+  ],
+  "success_rate": {
+    "backend": "100% (81/81 tests passed)",
+    "frontend": "N/A (backend-only testing)"
+  },
+  "seed_data_creation": "Tests create unique users per test run using timestamp-based email addresses (TEST_*_{timestamp}@clubdodo.com). Admin user (admin@clubdodo.com / dodo2026) is seeded on startup.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration 5 adds: (1) duration_minutes field to matches (10-180 range, default 60) for customizable match length. (2) Timer controls: POST /matches/{id}/timer/start, /timer/stop, /timer/reset (all editor-only) to manage match timer state (timer_started_at, timer_ended_at ISO datetime strings). (3) Manual lineup override: PUT /matches/{id}/lineup (editor-only) accepts {team_a, team_b, team_c, reserves} as user_id arrays, rehydrates with user details, validates no duplicates across teams, enforces team_size caps, auto-enables third_team if team_c has players. All features working correctly with proper authorization checks.",
+  "tests_executed": {
+    "iteration5_duration_minutes": [
+      "POST /api/matches with duration_minutes=90 persists and returns it, verified via GET",
+      "POST /api/matches without duration_minutes defaults to 60",
+      "POST /api/matches accepts duration_minutes=10 (minimum boundary)",
+      "POST /api/matches accepts duration_minutes=180 (maximum boundary)",
+      "POST /api/matches rejects duration_minutes=9 with 422 validation error",
+      "POST /api/matches rejects duration_minutes=181 with 422 validation error"
+    ],
+    "iteration5_timer_fields": [
+      "GET /api/matches/{id} returns duration_minutes, timer_started_at=null, timer_ended_at=null initially"
+    ],
+    "iteration5_timer_start": [
+      "POST /api/matches/{id}/timer/start (editor) sets timer_started_at to current ISO datetime, clears timer_ended_at, persists via GET",
+      "POST /api/matches/{id}/timer/start (non-editor) returns 403 Forbidden"
+    ],
+    "iteration5_timer_stop": [
+      "POST /api/matches/{id}/timer/stop (editor) sets timer_ended_at to current ISO datetime, preserves timer_started_at, persists via GET",
+      "POST /api/matches/{id}/timer/stop (non-editor) returns 403 Forbidden"
+    ],
+    "iteration5_timer_reset": [
+      "POST /api/matches/{id}/timer/reset (editor) clears both timer_started_at and timer_ended_at (sets to null), persists via GET",
+      "POST /api/matches/{id}/timer/reset (non-editor) returns 403 Forbidden"
+    ],
+    "iteration5_lineup_override": [
+      "PUT /api/matches/{id}/lineup (editor) accepts {team_a, team_b, team_c, reserves} as user_id arrays, rehydrates with {user_id, name, shirt_number, profile_picture, preferred_position, rating, vote}",
+      "PUT /api/matches/{id}/lineup sets status='scheduled' if match was 'voting'",
+      "PUT /api/matches/{id}/lineup rejects duplicate user in multiple teams with 400 'multiple teams' error",
+      "PUT /api/matches/{id}/lineup rejects team_a exceeding team_size with 400 'exceeds team size' error",
+      "PUT /api/matches/{id}/lineup rejects team_b exceeding team_size with 400 'exceeds team size' error",
+      "PUT /api/matches/{id}/lineup with team_c containing players auto-sets match.third_team_enabled=true, persists via GET",
+      "PUT /api/matches/{id}/lineup with empty arrays works (can reset lineup)",
+      "PUT /api/matches/{id}/lineup (non-editor) returns 403 Forbidden"
+    ],
+    "existing_tests_no_regressions": [
+      "Auth: 15 tests (register, login, me, forgot-password, reset-password)",
+      "Config: 3 tests (get config, update config admin-only)",
+      "Users: 4 tests (list users, update profile, grant-edit admin-only)",
+      "Matches: 11 tests (CRUD, voting, lineup generation, result recording, delete)",
+      "League Features: 17 tests (preferred_position, match_type, third_team_enabled, league points, 3-team matches)",
+      "Lineup Algorithm: 10 tests (position balancing, auto 3rd team, rating balance, idempotency)"
+    ]
+  },
+  "verified_requirements": [
+    "✅ POST /api/matches with duration_minutes in body (10-180 range) persists and returns it. Default 60 when omitted.",
+    "✅ POST /api/matches rejects duration_minutes < 10 or > 180 with 422.",
+    "✅ GET /api/matches/{id} returns duration_minutes, timer_started_at (null initially), timer_ended_at (null initially)",
+    "✅ POST /api/matches/{id}/timer/start (editor-only) sets timer_started_at=<now> and timer_ended_at=null",
+    "✅ POST /api/matches/{id}/timer/stop (editor-only) sets timer_ended_at=<now>, timer_started_at preserved",
+    "✅ POST /api/matches/{id}/timer/reset (editor-only) clears both timer_started_at and timer_ended_at",
+    "✅ Non-editor user gets 403 on timer/start, timer/stop, timer/reset",
+    "✅ PUT /api/matches/{id}/lineup (editor-only) accepts {team_a, team_b, team_c, reserves} as arrays of user_ids. Rehydrates with user details. Sets status='scheduled' if it was 'voting'.",
+    "✅ PUT /api/matches/{id}/lineup rejects duplicate user in multiple teams with 400",
+    "✅ PUT /api/matches/{id}/lineup rejects when team_a or team_b exceeds team_size with 400",
+    "✅ PUT /api/matches/{id}/lineup with team_c containing players auto-sets match.third_team_enabled=true",
+    "✅ PUT /api/matches/{id}/lineup with empty arrays works (can reset lineup)",
+    "✅ Non-editor user gets 403 on PUT /api/matches/{id}/lineup",
+    "✅ No regressions - previous 60 tests pass (auth, forgot-password, matches, users, config, vote, league, lineup generation)"
+  ]
+}
