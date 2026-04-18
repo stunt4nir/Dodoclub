@@ -702,22 +702,23 @@ export default function MatchDetail() {
                     value={guestName}
                     onChangeText={setGuestName}
                     placeholder="Guest name"
-                    placeholderTextColor={colors.textMuted}
+                    placeholderTextColor="#888"
                     underlineColorAndroid="transparent"
                     autoComplete="off"
                     autoCorrect={false}
                     importantForAutofill="no"
-                    selectionColor={colors.primary}
+                    selectionColor="#FFFF00"
                     style={{
                       flex: 1,
-                      backgroundColor: '#09090B',
-                      borderWidth: 1,
-                      borderColor: colors.border,
+                      backgroundColor: '#000000',
+                      borderWidth: 2,
+                      borderColor: '#FFFF00',
                       borderRadius: radii.md,
                       paddingHorizontal: spacing.md,
                       height: 48,
-                      color: '#FFFFFF',
-                      fontSize: 16,
+                      color: '#FFFF00',
+                      fontSize: 18,
+                      fontWeight: '900',
                     }}
                   />
                   <TextInput
@@ -726,22 +727,23 @@ export default function MatchDetail() {
                     onChangeText={(t) => setGuestShirt(t.replace(/[^0-9]/g, '').slice(0, 2))}
                     keyboardType="number-pad"
                     placeholder="#"
-                    placeholderTextColor={colors.textMuted}
+                    placeholderTextColor="#888"
                     underlineColorAndroid="transparent"
                     autoComplete="off"
                     autoCorrect={false}
                     importantForAutofill="no"
-                    selectionColor={colors.primary}
+                    selectionColor="#FFFF00"
                     style={{
                       width: 60,
-                      backgroundColor: '#09090B',
-                      borderWidth: 1,
-                      borderColor: colors.border,
+                      backgroundColor: '#000000',
+                      borderWidth: 2,
+                      borderColor: '#FFFF00',
                       borderRadius: radii.md,
                       paddingHorizontal: spacing.md,
                       height: 48,
-                      color: '#FFFFFF',
-                      fontSize: 16,
+                      color: '#FFFF00',
+                      fontSize: 18,
+                      fontWeight: '900',
                       textAlign: 'center',
                     }}
                   />
