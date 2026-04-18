@@ -703,7 +703,18 @@ export default function MatchDetail() {
                     onChangeText={setGuestName}
                     placeholder="Guest name"
                     placeholderTextColor={colors.textMuted}
-                    style={[styles.input, { flex: 1, color: '#FFFFFF' }]}
+                    underlineColorAndroid="transparent"
+                    style={{
+                      flex: 1,
+                      backgroundColor: '#09090B',
+                      borderWidth: 1,
+                      borderColor: colors.border,
+                      borderRadius: radii.md,
+                      paddingHorizontal: spacing.md,
+                      height: 48,
+                      color: '#FFFFFF',
+                      fontSize: 16,
+                    }}
                   />
                   <TextInput
                     testID="guest-shirt-input"
@@ -712,7 +723,19 @@ export default function MatchDetail() {
                     keyboardType="number-pad"
                     placeholder="#"
                     placeholderTextColor={colors.textMuted}
-                    style={[styles.input, { width: 60, textAlign: 'center', color: '#FFFFFF' }]}
+                    underlineColorAndroid="transparent"
+                    style={{
+                      width: 60,
+                      backgroundColor: '#09090B',
+                      borderWidth: 1,
+                      borderColor: colors.border,
+                      borderRadius: radii.md,
+                      paddingHorizontal: spacing.md,
+                      height: 48,
+                      color: '#FFFFFF',
+                      fontSize: 16,
+                      textAlign: 'center',
+                    }}
                   />
                   <TouchableOpacity
                     testID="add-guest-btn"
