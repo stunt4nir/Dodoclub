@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   View,
   Text,
@@ -14,8 +14,11 @@ import {
 import { useRouter, Link } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useAuth } from '../../src/auth';
+import { api } from '../../src/api';
 import { colors, spacing, radii } from '../../src/theme';
 import { Display, Overline, Muted } from '../../src/typography';
+
+type ClubCfg = { club_name: string; club_logo: string | null };
 
 export default function LoginScreen() {
   const router = useRouter();
@@ -24,6 +27,15 @@ export default function LoginScreen() {
   const [password, setPassword] = useState('');
   const [err, setErr] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [cfg, setCfg] = useState<ClubCfg | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    api<ClubCfg>('/config', { auth: false })
+      .then((c) => { if (alive) setCfg(c); })
+      .catch(() => { /* keep fallback */ });
+    return () => { alive = false; };
+  }, []);
 
   const onSubmit = async () => {
     setErr(null);
@@ -49,10 +61,21 @@ export default function LoginScreen() {
           keyboardShouldPersistTaps="handled"
         >
           <View style={styles.brand}>
-            <View style={styles.logoCircle}>
-              <Text style={styles.logoMark}>CD</Text>
-            </View>
-            <Display style={{ marginTop: spacing.md }}>Club Dodo</Display>
+            {cfg?.club_logo ? (
+              <Image
+                source={{ uri: cfg.club_logo }}
+                style={styles.logoImage}
+                resizeMode="cover"
+                testID="login-club-logo"
+              />
+            ) : (
+              <View style={styles.logoCircle}>
+                <Text style={styles.logoMark}>
+                  {(cfg?.club_name || 'Club Dodo').trim().split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase()).join('') || 'CD'}
+                </Text>
+              </View>
+            )}
+            <Display style={{ marginTop: spacing.md }}>{cfg?.club_name || 'Club Dodo'}</Display>
             <Overline style={{ marginTop: 4 }}>Matchday HQ</Overline>
           </View>
 
@@ -149,6 +172,14 @@ const styles = StyleSheet.create({
     fontSize: 34,
     fontWeight: '900',
     letterSpacing: -1,
+  },
+  logoImage: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    backgroundColor: colors.surface,
+    borderWidth: 4,
+    borderColor: colors.surface,
   },
   form: {
     backgroundColor: colors.surface,

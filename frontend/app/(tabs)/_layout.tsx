@@ -19,15 +19,17 @@ export default function TabsLayout() {
   }
   if (!user) return <Redirect href="/(auth)/login" />;
 
-  // Edge-to-edge is disabled. The tab bar can't go physically below the system
-  // nav bar, so "lowering" means shrinking the tab-bar height so its top edge
-  // moves down (~1 cm ≈ 60 dp less height).
+  // Lift the tab-bar icons ~2 cm (≈75 dp) above the system nav / gesture pill
+  // to avoid the Samsung S25 Ultra overlap. We add a large bottom padding so
+  // the icons sit visually higher while the bar itself remains glued to the
+  // bottom.
   const bottomInset = insets.bottom;
+  const LIFT_DP = 75; // ≈ 2 cm
   const ANDROID_FLOOR = 0;
-  const extraBottom = Platform.OS === 'android' ? Math.max(ANDROID_FLOOR, bottomInset) : bottomInset;
-  // ~1 cm shorter than before (64 -> 40); icons shift visually downward.
-  const tabBarHeight = 40 + extraBottom;
-  const tabBarPaddingBottom = Math.max(0, extraBottom);
+  const nativeExtra = Platform.OS === 'android' ? Math.max(ANDROID_FLOOR, bottomInset) : bottomInset;
+  const extraBottom = nativeExtra + LIFT_DP;
+  const tabBarHeight = 50 + extraBottom;
+  const tabBarPaddingBottom = extraBottom;
 
   return (
     <Tabs
