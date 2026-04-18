@@ -169,6 +169,59 @@ export default function ProfileScreen() {
     );
   };
 
+  const resetMatches = () => {
+    Alert.alert(
+      'Reset matches only?',
+      'Deletes every match (fixtures + history + votes). Players and their career stats are preserved.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete matches',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const res = await api<{ matches_deleted: number }>(
+                '/admin/reset/matches',
+                { method: 'POST' }
+              );
+              await load();
+              Alert.alert('Done', `Deleted ${res.matches_deleted} match(es).`);
+            } catch (e: any) {
+              Alert.alert('Error', e.message || 'Failed');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const resetLeague = () => {
+    Alert.alert(
+      'Start a new season?',
+      'Resets every player\'s W / D / L / League Points to 0. Goals, assists, matches played and match history are kept.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Reset standings',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const res = await api<{ users_reset: number }>(
+                '/admin/reset/league',
+                { method: 'POST' }
+              );
+              await refresh();
+              await load();
+              Alert.alert('New season started', `Reset league standings for ${res.users_reset} player(s).`);
+            } catch (e: any) {
+              Alert.alert('Error', e.message || 'Failed');
+            }
+          },
+        },
+      ]
+    );
+  };
+
   if (!user) {
     return (
       <SafeAreaView style={styles.safe}>
@@ -374,6 +427,43 @@ export default function ProfileScreen() {
             <Overline style={{ marginTop: spacing.lg, marginBottom: spacing.sm }}>
               Danger zone
             </Overline>
+
+            <TouchableOpacity
+              testID="reset-matches-btn"
+              onPress={resetMatches}
+              style={[styles.dangerBtn, { borderColor: colors.warning, marginBottom: spacing.sm }]}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="calendar-clear-outline" size={18} color={colors.warning} />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.dangerTitle, { color: colors.warning }]}>
+                  RESET MATCHES ONLY
+                </Text>
+                <Text style={styles.dangerSub}>
+                  Wipes fixtures & history. Keeps players & career stats.
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={colors.warning} />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              testID="reset-league-btn"
+              onPress={resetLeague}
+              style={[styles.dangerBtn, { borderColor: colors.warning, marginBottom: spacing.sm }]}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="trophy-outline" size={18} color={colors.warning} />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.dangerTitle, { color: colors.warning }]}>
+                  NEW SEASON · RESET STANDINGS
+                </Text>
+                <Text style={styles.dangerSub}>
+                  Zeros W/D/L/points for everyone. Goals & assists kept.
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={colors.warning} />
+            </TouchableOpacity>
+
             <TouchableOpacity
               testID="reset-app-data-btn"
               onPress={resetAppData}
@@ -382,9 +472,9 @@ export default function ProfileScreen() {
             >
               <Ionicons name="trash-bin-outline" size={18} color={colors.danger} />
               <View style={{ flex: 1 }}>
-                <Text style={styles.dangerTitle}>RESET ALL APP DATA</Text>
+                <Text style={styles.dangerTitle}>RESET EVERYTHING</Text>
                 <Text style={styles.dangerSub}>
-                  Deletes every match & non-admin player. Zeros admin stats.
+                  Deletes all matches & non-admin players. Zeros admin stats.
                 </Text>
               </View>
               <Ionicons name="chevron-forward" size={18} color={colors.danger} />

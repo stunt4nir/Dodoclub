@@ -889,7 +889,6 @@ async def admin_reset(admin=Depends(require_admin)):
     The seeded admin, club config, and reset tokens are preserved (tokens expire)."""
     matches_deleted = await db.matches.delete_many({})
     users_deleted = await db.users.delete_many({"role": {"$ne": "admin"}})
-    # Reset all admin users' stats (there could be multiple admins)
     await db.users.update_many(
         {"role": "admin"},
         {
@@ -909,6 +908,25 @@ async def admin_reset(admin=Depends(require_admin)):
         "matches_deleted": matches_deleted.deleted_count,
         "users_deleted": users_deleted.deleted_count,
     }
+
+
+@api.post("/admin/reset/matches")
+async def admin_reset_matches(admin=Depends(require_admin)):
+    """Delete every match (history + fixtures + votes), but keep all players
+    and their career stats untouched."""
+    res = await db.matches.delete_many({})
+    return {"ok": True, "matches_deleted": res.deleted_count}
+
+
+@api.post("/admin/reset/league")
+async def admin_reset_league(admin=Depends(require_admin)):
+    """Zero out league standings (wins, draws, losses, league_points) for all
+    users. Goals, assists, matches_played, and match history are preserved."""
+    res = await db.users.update_many(
+        {},
+        {"$set": {"wins": 0, "draws": 0, "losses": 0, "league_points": 0}},
+    )
+    return {"ok": True, "users_reset": res.modified_count}
 
 
 @api.get("/")
