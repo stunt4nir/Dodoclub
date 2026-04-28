@@ -1294,6 +1294,16 @@ async def root():
     return {"app": "Club Dodo", "status": "ok"}
 
 
+@api.get("/download/web-bundle.zip", include_in_schema=False)
+def download_web_bundle():
+    """Download the latest static Expo web build (zipped)."""
+    from fastapi.responses import FileResponse
+    zip_path = "/app/club-dodo-web.zip"
+    if not os.path.exists(zip_path):
+        raise HTTPException(404, "Web bundle not built yet. Run: cd /app/frontend && npx expo export -p web && cd dist && zip -qr /app/club-dodo-web.zip .")
+    return FileResponse(zip_path, filename="club-dodo-web.zip", media_type="application/zip")
+
+
 app.include_router(api)
 
 app.add_middleware(
