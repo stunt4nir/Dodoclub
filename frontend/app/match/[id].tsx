@@ -935,13 +935,14 @@ export default function MatchDetail() {
                     selectionColor="#FF4500"
                     style={{
                       flex: 1,
-                      backgroundColor: '#000000',
+                      minWidth: 0,
+                      backgroundColor: '#FFFFFF',
                       borderWidth: 1,
                       borderColor: colors.border,
                       borderRadius: radii.md,
                       paddingHorizontal: spacing.md,
-                      height: 48,
-                      color: '#FFFFFF',
+                      height: 44,
+                      color: '#000000',
                       fontSize: 16,
                     }}
                   />
@@ -959,26 +960,18 @@ export default function MatchDetail() {
                     spellCheck={false}
                     selectionColor="#FF4500"
                     style={{
-                      width: 60,
-                      backgroundColor: '#000000',
+                      width: 56,
+                      backgroundColor: '#FFFFFF',
                       borderWidth: 1,
                       borderColor: colors.border,
                       borderRadius: radii.md,
-                      paddingHorizontal: spacing.md,
-                      height: 48,
-                      color: '#FFFFFF',
+                      paddingHorizontal: 8,
+                      height: 44,
+                      color: '#000000',
                       fontSize: 16,
                       textAlign: 'center',
                     }}
                   />
-                  <TouchableOpacity
-                    testID="add-guest-btn"
-                    onPress={addGuestToLineup}
-                    style={styles.guestAddBtn}
-                    activeOpacity={0.85}
-                  >
-                    <Ionicons name="add" size={20} color="#fff" />
-                  </TouchableOpacity>
                 </View>
                 <View style={{ marginTop: 10 }}>
                   <Text style={[styles.label, { marginBottom: 4 }]}>POSITION (optional)</Text>
@@ -1012,6 +1005,15 @@ export default function MatchDetail() {
                     })}
                   </View>
                 </View>
+                <TouchableOpacity
+                  testID="add-guest-btn"
+                  onPress={addGuestToLineup}
+                  style={styles.guestAddBtnFull}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons name="add-circle" size={18} color="#fff" />
+                  <Text style={styles.guestAddBtnFullText}>ADD GUEST PLAYER</Text>
+                </TouchableOpacity>
               </View>
 
               <Muted style={{ marginTop: spacing.md, marginBottom: spacing.sm, fontSize: 12 }}>
@@ -1229,6 +1231,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: colors.primary,
+  },
+  guestAddBtnFull: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    height: 44,
+    borderRadius: radii.md,
+    backgroundColor: colors.primary,
+    marginTop: 12,
+  },
+  guestAddBtnFullText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '900',
+    letterSpacing: 1,
   },
   guestBadge: {
     paddingHorizontal: 6,
