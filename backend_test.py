@@ -1,295 +1,326 @@
-"""Backend tests for POST /api/admin/reset/players and related permissions.
+"""Backend tests for Availability poll + auto-match creation + GuestRef preferred_position.
 
-Covers the full specification from the review request:
-- Admin-only reset wipes non-admin users, scrubs votes/lineup/comments,
-  preserves matches and admin stats.
-- Permission (401/403) and idempotency edge cases.
-- Regression checks for the two other admin reset endpoints.
+Uses EXPO_PUBLIC_BACKEND_URL from /app/frontend/.env as base and /api prefix.
+Cleans relevant Mongo collections before running so counts are deterministic.
 """
 import os
-import time
+import sys
 import uuid
+import re
 from datetime import datetime, timezone, timedelta
 
 import requests
+from pymongo import MongoClient
 
-BASE = "https://dodo-roster-build.preview.emergentagent.com/api"
+# ---- Base URL ----
+BASE = None
+try:
+    with open("/app/frontend/.env") as f:
+        for line in f:
+            if line.startswith("EXPO_PUBLIC_BACKEND_URL="):
+                BASE = line.split("=", 1)[1].strip().strip('"').rstrip("/")
+                break
+except Exception as e:
+    print("could not read frontend/.env", e)
+if not BASE:
+    print("No backend URL found"); sys.exit(1)
+API = BASE + "/api"
+print("Using API base:", API)
+
+# ---- Mongo cleanup ----
+MONGO_URL = "mongodb://localhost:27017"
+DB_NAME = "club_dodo"
+_mc = MongoClient(MONGO_URL)
+_db = _mc[DB_NAME]
+
+_db.availability.delete_many({})
+_db.matches.delete_many({"auto_from_availability_date": {"$exists": True}})
+_db.users.delete_many({"email": {"$regex": r"^avtest_"}})
+_db.users.delete_many({"email": {"$regex": r"^guesttest_"}})
+print("Mongo cleanup done")
+
 ADMIN_EMAIL = "admin@clubdodo.com"
 ADMIN_PASSWORD = "dodo2026"
 
-
-def auth(token):
-    return {"Authorization": f"Bearer {token}"}
-
-
-def rand_email(prefix):
-    return f"{prefix}-{uuid.uuid4().hex[:8]}@test.com"
-
-
 results = []
 
-
-def record(name, ok, detail=""):
-    results.append((name, ok, detail))
+def log(name, ok, detail=""):
     mark = "PASS" if ok else "FAIL"
-    print(f"[{mark}] {name} {('- ' + detail) if detail else ''}")
+    print(f"[{mark}] {name} — {detail}")
+    results.append((name, ok, detail))
+    return ok
 
 
-def login(email, password):
-    r = requests.post(f"{BASE}/auth/login", json={"email": email, "password": password})
-    return r
+def auth_header(tok):
+    return {"Authorization": f"Bearer {tok}"}
 
 
-def register(email, name, pwd="password123"):
-    return requests.post(
-        f"{BASE}/auth/register",
-        json={"email": email, "password": pwd, "name": name, "preferred_position": "CM"},
-    )
+# ---- Admin login ----
+r = requests.post(f"{API}/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD}, timeout=30)
+assert r.status_code == 200, f"admin login failed: {r.status_code} {r.text}"
+admin_tok = r.json()["token"]
+admin = r.json()["user"]
+admin_id = admin["id"]
+print("Admin logged in:", admin_id)
 
 
-def main():
-    # Clean slate: first login admin & reset fully
-    r = login(ADMIN_EMAIL, ADMIN_PASSWORD)
-    assert r.status_code == 200, f"admin login failed: {r.status_code} {r.text}"
-    admin_token = r.json()["token"]
-    admin_id = r.json()["user"]["id"]
-
-    # Full reset to clear previous test data
-    rr = requests.post(f"{BASE}/admin/reset", headers=auth(admin_token))
-    assert rr.status_code == 200, rr.text
-    print("Initial clean slate via /admin/reset OK")
-
-    # --- Setup: 3 regular users ---
-    p_emails = [rand_email("p1"), rand_email("p2"), rand_email("p3")]
-    p_names = ["Lionel Parker", "Marco Duval", "Henrik Sorensen"]
-    p_tokens = []
-    p_ids = []
-    for e, n in zip(p_emails, p_names):
-        rr = register(e, n)
-        ok = rr.status_code == 200
-        record(f"Register {n}", ok, rr.text[:100] if not ok else "")
-        if not ok:
-            return
-        p_tokens.append(rr.json()["token"])
-        p_ids.append(rr.json()["user"]["id"])
-
-    # --- Create friendly match team_size=4 ---
-    future = (datetime.now(timezone.utc) + timedelta(days=3)).isoformat()
-    rr = requests.post(
-        f"{BASE}/matches",
-        headers=auth(admin_token),
-        json={
-            "title": "Reset Players Test Match",
-            "date": future,
-            "location": "Dodo Pitch",
-            "team_size": 4,
-            "match_type": "friendly",
-        },
-    )
-    ok = rr.status_code == 200
-    record("Create friendly match (team_size=4)", ok, rr.text[:200] if not ok else "")
-    if not ok:
-        return
-    mid = rr.json()["id"]
-
-    # --- Votes: admin + all 3 regulars vote yes ---
-    for tok, label in zip([admin_token] + p_tokens, ["admin", "p1", "p2", "p3"]):
-        rr = requests.post(
-            f"{BASE}/matches/{mid}/vote", headers=auth(tok), json={"vote": "yes"}
-        )
-        record(f"Vote yes by {label}", rr.status_code == 200)
-
-    # --- Comments: p1 x2, admin x1 ---
-    cids_p1 = []
-    for txt in ["Can't wait!", "Bringing the thunder"]:
-        rr = requests.post(
-            f"{BASE}/matches/{mid}/comments",
-            headers=auth(p_tokens[0]),
-            json={"text": txt},
-        )
-        record(f"p1 comment '{txt}'", rr.status_code == 200)
-        if rr.status_code == 200:
-            cids_p1.append(rr.json()["id"])
-    rr = requests.post(
-        f"{BASE}/matches/{mid}/comments",
-        headers=auth(admin_token),
-        json={"text": "See you all there."},
-    )
-    record("Admin comment", rr.status_code == 200)
-    admin_cid = rr.json()["id"] if rr.status_code == 200 else None
-
-    # --- Generate lineup ---
-    rr = requests.post(
-        f"{BASE}/matches/{mid}/generate-lineup", headers=auth(admin_token)
-    )
-    ok = rr.status_code == 200
-    record("POST generate-lineup -> 200", ok, rr.text[:200] if not ok else "")
-
-    # Capture admin stats baseline (should be untouched by reset/players)
-    rr = requests.get(f"{BASE}/auth/me", headers=auth(admin_token))
-    admin_before = rr.json()
-    admin_stats_before = {
-        k: admin_before.get(k)
-        for k in ("goals", "assists", "matches_played", "wins", "draws", "losses", "league_points", "rating")
-    }
-
-    # --- 5. Call POST /api/admin/reset/players as admin ---
-    rr = requests.post(f"{BASE}/admin/reset/players", headers=auth(admin_token))
-    body = rr.json() if rr.headers.get("content-type", "").startswith("application/json") else {}
-    ok = rr.status_code == 200 and body.get("ok") is True and body.get("users_deleted") == 3
-    record(
-        "POST /admin/reset/players -> 200 {ok:true, users_deleted:3}",
-        ok,
-        f"status={rr.status_code} body={body}",
-    )
-
-    # --- 6. GET /users -> only admin ---
-    rr = requests.get(f"{BASE}/users", headers=auth(admin_token))
-    users = rr.json() if rr.status_code == 200 else []
-    ok = (
-        rr.status_code == 200
-        and len(users) == 1
-        and users[0]["id"] == admin_id
-        and users[0]["role"] == "admin"
-    )
-    record(
-        "GET /users after reset -> only admin remains",
-        ok,
-        f"count={len(users)} ids={[u['id'] for u in users]}",
-    )
-
-    # --- 7. GET /matches/{mid} still exists, votes scrubbed, lineup scrubbed ---
-    rr = requests.get(f"{BASE}/matches/{mid}", headers=auth(admin_token))
-    ok_match = rr.status_code == 200
-    record("Match still exists after reset", ok_match, rr.text[:200] if not ok_match else "")
-    if ok_match:
-        mdata = rr.json()
-        vote_user_ids = [v["user_id"] for v in mdata.get("votes", [])]
-        scrub_ok = all(pid not in vote_user_ids for pid in p_ids) and admin_id in vote_user_ids
-        record(
-            "Match votes contain only admin (no p1/p2/p3)",
-            scrub_ok,
-            f"vote_user_ids={vote_user_ids}",
-        )
-        lineup = mdata.get("lineup") or {}
-        all_team_uids = []
-        for k in ("team_a", "team_b", "team_c", "reserves"):
-            for p in lineup.get(k) or []:
-                all_team_uids.append(p.get("user_id"))
-        lineup_scrub_ok = all(pid not in all_team_uids for pid in p_ids)
-        admin_in_lineup = admin_id in all_team_uids
-        record(
-            "Lineup team_a/b/c/reserves no longer contain p1/p2/p3",
-            lineup_scrub_ok,
-            f"uids={all_team_uids}",
-        )
-        record("Lineup still contains admin", admin_in_lineup, f"uids={all_team_uids}")
-
-    # --- 8. GET comments -> only admin's remains ---
-    rr = requests.get(f"{BASE}/matches/{mid}/comments", headers=auth(admin_token))
-    comments = rr.json() if rr.status_code == 200 else []
-    ok = (
-        rr.status_code == 200
-        and len(comments) == 1
-        and comments[0]["user_id"] == admin_id
-    )
-    record(
-        "GET comments -> only admin's 1 comment remains",
-        ok,
-        f"count={len(comments)} ids={[c.get('user_id') for c in comments]}",
-    )
-
-    # --- 9. Admin career stats unchanged ---
-    rr = requests.get(f"{BASE}/auth/me", headers=auth(admin_token))
-    admin_after = rr.json()
-    admin_stats_after = {
-        k: admin_after.get(k)
-        for k in ("goals", "assists", "matches_played", "wins", "draws", "losses", "league_points", "rating")
-    }
-    ok = admin_stats_before == admin_stats_after
-    record(
-        "Admin career stats unchanged by reset/players",
-        ok,
-        f"before={admin_stats_before} after={admin_stats_after}",
-    )
-
-    # --- 10. p1 login with old creds -> 401 ---
-    rr = login(p_emails[0], "password123")
-    record("p1 login after reset -> 401", rr.status_code == 401, f"got={rr.status_code}")
-
-    # --- 11. Register a new regular user, then call reset/players as them -> 403 ---
-    new_email = rand_email("reg")
-    rr = register(new_email, "Sam Carter")
-    record("Register post-reset regular user", rr.status_code == 200)
-    reg_token = rr.json()["token"] if rr.status_code == 200 else None
-    if reg_token:
-        rr = requests.post(f"{BASE}/admin/reset/players", headers=auth(reg_token))
-        record(
-            "Non-admin POST /admin/reset/players -> 403",
-            rr.status_code == 403,
-            f"got={rr.status_code} body={rr.text[:120]}",
-        )
-
-    # --- 12. No Authorization header -> 401 ---
-    rr = requests.post(f"{BASE}/admin/reset/players")
-    record(
-        "Unauthenticated POST /admin/reset/players -> 401",
-        rr.status_code == 401,
-        f"got={rr.status_code}",
-    )
-
-    # --- 13. Idempotent when 0 non-admins exist ---
-    # First, clear the 1 regular user we just created via admin reset/players
-    rr = requests.post(f"{BASE}/admin/reset/players", headers=auth(admin_token))
-    # This should delete the new regular user (1)
-    ok = rr.status_code == 200 and rr.json().get("users_deleted") == 1
-    record(
-        "Second /admin/reset/players removes new regular -> users_deleted=1",
-        ok,
-        f"body={rr.text[:120]}",
-    )
-    # Now with zero non-admins, call again
-    rr = requests.post(f"{BASE}/admin/reset/players", headers=auth(admin_token))
-    body = rr.json() if rr.status_code == 200 else {}
-    ok = rr.status_code == 200 and body.get("ok") is True and body.get("users_deleted") == 0
-    record(
-        "Idempotent /admin/reset/players when no non-admins -> users_deleted=0",
-        ok,
-        f"body={body}",
-    )
-
-    # --- 14. Regression: /admin/reset/matches still works ---
-    rr = requests.post(f"{BASE}/admin/reset/matches", headers=auth(admin_token))
-    body = rr.json() if rr.status_code == 200 else {}
-    ok = rr.status_code == 200 and body.get("ok") is True
-    record(
-        "Regression: POST /admin/reset/matches -> 200",
-        ok,
-        f"status={rr.status_code} body={body}",
-    )
-
-    # --- 15. Regression: /admin/reset still works ---
-    rr = requests.post(f"{BASE}/admin/reset", headers=auth(admin_token))
-    body = rr.json() if rr.status_code == 200 else {}
-    ok = rr.status_code == 200 and body.get("ok") is True
-    record(
-        "Regression: POST /admin/reset -> 200",
-        ok,
-        f"status={rr.status_code} body={body}",
-    )
-
-    # Summary
-    passed = sum(1 for _, ok, _ in results if ok)
-    total = len(results)
-    print("\n" + "=" * 60)
-    print(f"RESULTS: {passed}/{total} PASS")
-    if passed != total:
-        print("\nFailures:")
-        for name, ok, detail in results:
-            if not ok:
-                print(f"  - {name}: {detail}")
-    return passed == total
+def register_user(prefix, idx):
+    email = f"{prefix}_{idx}_{uuid.uuid4().hex[:6]}@clubdodo.com"
+    r = requests.post(f"{API}/auth/register", json={
+        "email": email,
+        "password": "password123",
+        "name": f"{prefix.title()}{idx}",
+        "shirt_number": (idx % 99) + 1,
+    }, timeout=30)
+    assert r.status_code == 200, f"register {email} failed: {r.status_code} {r.text}"
+    return r.json()["token"], r.json()["user"]
 
 
-if __name__ == "__main__":
-    main()
+# =====================================================
+# A) Availability poll basics
+# =====================================================
+
+today = datetime.now(timezone.utc).date()
+today_str = today.isoformat()
+yesterday_str = (today - timedelta(days=1)).isoformat()
+future8_str = (today + timedelta(days=8)).isoformat()
+
+r = requests.get(f"{API}/availability", headers=auth_header(admin_tok), timeout=30)
+ok = r.status_code == 200
+data = r.json() if ok else {}
+days = data.get("days") if ok else None
+detail = f"status={r.status_code} threshold={data.get('threshold')} auto_team_size={data.get('auto_team_size')} days_len={len(days) if days else None}"
+a1_ok = (
+    ok and data.get("threshold") == 8 and data.get("auto_team_size") == 4
+    and isinstance(days, list) and len(days) == 7
+)
+if a1_ok:
+    d0 = days[0]
+    required_keys = {"date", "yes_count", "no_count", "reserve_count", "my_vote", "yes", "no", "reserve", "auto_match_id"}
+    missing = required_keys - set(d0.keys())
+    a1_ok = not missing and re.match(r"^\d{4}-\d{2}-\d{2}$", d0["date"]) is not None
+    detail += f" missing_keys={missing} first_day={d0.get('date')}"
+log("A1 GET /availability structure", a1_ok, detail)
+
+r = requests.post(f"{API}/availability", headers=auth_header(admin_tok),
+                  json={"date": today_str, "vote": "yes"}, timeout=30)
+a2a_ok = r.status_code == 200 and r.json().get("auto_match_id") is None
+log("A2a POST today yes → auto_match_id null", a2a_ok, f"status={r.status_code} body={r.text[:200]}")
+
+r = requests.get(f"{API}/availability", headers=auth_header(admin_tok), timeout=30)
+day_today = next((d for d in r.json()["days"] if d["date"] == today_str), None)
+a2b_ok = day_today is not None and day_today["my_vote"] == "yes" and day_today["yes_count"] == 1
+log("A2b GET shows my_vote=yes, yes_count=1", a2b_ok, f"day={day_today}")
+
+r = requests.post(f"{API}/availability", headers=auth_header(admin_tok),
+                  json={"date": today_str, "vote": "no"}, timeout=30)
+a3a_ok = r.status_code == 200
+log("A3a POST update to no", a3a_ok, f"status={r.status_code}")
+
+r = requests.get(f"{API}/availability", headers=auth_header(admin_tok), timeout=30)
+day_today = next((d for d in r.json()["days"] if d["date"] == today_str), None)
+a3b_ok = day_today["my_vote"] == "no" and day_today["yes_count"] == 0 and day_today["no_count"] == 1
+log("A3b GET shows my_vote=no, yes=0 no=1", a3b_ok, f"day={day_today}")
+
+r = requests.post(f"{API}/availability", headers=auth_header(admin_tok),
+                  json={"date": yesterday_str, "vote": "yes"}, timeout=30)
+a4a_ok = r.status_code == 400
+log("A4a POST yesterday → 400", a4a_ok, f"status={r.status_code} body={r.text[:200]}")
+
+r = requests.post(f"{API}/availability", headers=auth_header(admin_tok),
+                  json={"date": future8_str, "vote": "yes"}, timeout=30)
+a4b_ok = r.status_code == 400
+log("A4b POST 8 days out → 400", a4b_ok, f"status={r.status_code} body={r.text[:200]}")
+
+r = requests.post(f"{API}/availability", headers=auth_header(admin_tok),
+                  json={"date": "2026/13/01", "vote": "yes"}, timeout=30)
+a4c_ok = r.status_code == 400
+log("A4c POST malformed '2026/13/01' → 400", a4c_ok, f"status={r.status_code} body={r.text[:200]}")
+
+# =====================================================
+# B) Auto-create match @ 8 yes votes
+# =====================================================
+
+date3_obj = today + timedelta(days=3)
+date3 = date3_obj.isoformat()
+
+p_tokens = []
+p_users = []
+for i in range(1, 8):
+    tok, usr = register_user("avtest", i)
+    p_tokens.append(tok); p_users.append(usr)
+print(f"Registered 7 users: {[u['id'][:8] for u in p_users]}")
+
+r = requests.post(f"{API}/availability", headers=auth_header(admin_tok),
+                  json={"date": date3, "vote": "yes"}, timeout=30)
+assert r.status_code == 200, r.text
+for i in range(6):
+    r = requests.post(f"{API}/availability", headers=auth_header(p_tokens[i]),
+                      json={"date": date3, "vote": "yes"}, timeout=30)
+    assert r.status_code == 200, r.text
+    assert r.json().get("auto_match_id") is None, f"should not auto-create yet: {r.json()}"
+
+r = requests.get(f"{API}/availability", headers=auth_header(admin_tok), timeout=30)
+day3 = next((d for d in r.json()["days"] if d["date"] == date3), None)
+b5_ok = day3 is not None and day3["yes_count"] == 7 and day3["auto_match_id"] is None
+log("B5 7 yes votes → yes_count=7, auto_match_id=null", b5_ok,
+    f"yes_count={day3.get('yes_count') if day3 else None} auto_match_id={day3.get('auto_match_id') if day3 else None}")
+
+r = requests.post(f"{API}/availability", headers=auth_header(p_tokens[6]),
+                  json={"date": date3, "vote": "yes"}, timeout=30)
+body = r.json() if r.status_code == 200 else {}
+auto_mid = body.get("auto_match_id")
+try:
+    uuid.UUID(auto_mid)
+    is_uuid = True
+except Exception:
+    is_uuid = False
+b6a_ok = r.status_code == 200 and auto_mid is not None and is_uuid
+log("B6a p7 yes → auto_match_id non-null UUID", b6a_ok, f"auto_match_id={auto_mid}")
+
+r = requests.get(f"{API}/availability", headers=auth_header(admin_tok), timeout=30)
+day3 = next((d for d in r.json()["days"] if d["date"] == date3), None)
+b6b_ok = day3 and day3["auto_match_id"] == auto_mid and day3["yes_count"] == 8
+log("B6b GET shows same auto_match_id, yes_count=8", b6b_ok,
+    f"yes_count={day3['yes_count']} auto_match_id={day3['auto_match_id']}")
+
+r = requests.get(f"{API}/matches/{auto_mid}", headers=auth_header(admin_tok), timeout=30)
+b7_status_ok = r.status_code == 200
+mdata = r.json() if b7_status_ok else {}
+votes_list = mdata.get("votes", [])
+vote_map = {v["user_id"]: v["vote"] for v in votes_list}
+expected_ids = {admin_id} | {u["id"] for u in p_users}
+dbm = _db.matches.find_one({"id": auto_mid})
+b7_checks = {
+    "status=200": b7_status_ok,
+    "team_size=4": mdata.get("team_size") == 4,
+    "match_type=friendly": mdata.get("match_type") == "friendly",
+    "status=voting": mdata.get("status") == "voting",
+    "auto_from_avail_date matches": bool(dbm) and dbm.get("auto_from_availability_date") == date3,
+    "all 8 user_ids present": set(vote_map.keys()) == expected_ids,
+    "all votes=yes": all(v == "yes" for v in vote_map.values()) and len(vote_map) == 8,
+}
+b7_ok = all(b7_checks.values())
+log("B7 GET /matches/{auto_mid} correctness", b7_ok, f"checks={b7_checks}")
+
+# B8. Idempotent
+tok9, u9 = register_user("avtest", 9)
+r = requests.post(f"{API}/availability", headers=auth_header(tok9),
+                  json={"date": date3, "vote": "yes"}, timeout=30)
+b8_ok = r.status_code == 200 and r.json().get("auto_match_id") == auto_mid
+log("B8 another yes returns same auto_match_id (idempotent)", b8_ok,
+    f"status={r.status_code} returned={r.json().get('auto_match_id')}")
+
+# B9. Exactly one match
+count = _db.matches.count_documents({"auto_from_availability_date": date3})
+b9_ok = count == 1
+log("B9 exactly one match auto-created for date3", b9_ok, f"count={count}")
+
+# =====================================================
+# C) GuestRef preferred_position
+# =====================================================
+
+future_match_date = (datetime.now(timezone.utc) + timedelta(days=10)).isoformat()
+r = requests.post(f"{API}/matches", headers=auth_header(admin_tok), json={
+    "title": "Guest Lineup Test",
+    "date": future_match_date,
+    "team_size": 4,
+    "match_type": "friendly",
+}, timeout=30)
+assert r.status_code == 200, r.text
+gmid = r.json()["id"]
+print("Created friendly match:", gmid)
+
+dummies = []
+for i in range(3):
+    tok, usr = register_user("guesttest", i)
+    dummies.append((tok, usr))
+for tok, usr in [(admin_tok, admin)] + dummies:
+    r = requests.post(f"{API}/matches/{gmid}/vote", headers=auth_header(tok), json={"vote": "yes"}, timeout=30)
+    assert r.status_code == 200, r.text
+
+reg_ids = [u["id"] for _, u in dummies]
+# C11
+lineup_body = {
+    "team_a": [{"name": "Alice Guest", "shirt_number": 99, "preferred_position": "CAM"}],
+    "team_b": reg_ids,
+    "team_c": [],
+    "reserves": [],
+}
+r = requests.put(f"{API}/matches/{gmid}/lineup", headers=auth_header(admin_tok),
+                 json=lineup_body, timeout=30)
+c11a_ok = r.status_code == 200
+log("C11a PUT lineup with guest preferred_position=CAM → 200", c11a_ok,
+    f"status={r.status_code} body={r.text[:300]}")
+
+r = requests.get(f"{API}/matches/{gmid}", headers=auth_header(admin_tok), timeout=30)
+match = r.json()
+team_a = match["lineup"]["team_a"]
+guest = team_a[0] if team_a else None
+c11b_ok = bool(guest) and guest.get("preferred_position") == "CAM" and guest.get("preferred_positions") == ["CAM"]
+log("C11b guest has preferred_position=CAM and preferred_positions=['CAM']", c11b_ok, f"guest={guest}")
+
+# C12
+lineup_body2 = {
+    "team_a": [{"name": "Bob Guest", "shirt_number": 88}],
+    "team_b": reg_ids,
+    "team_c": [],
+    "reserves": [],
+}
+r = requests.put(f"{API}/matches/{gmid}/lineup", headers=auth_header(admin_tok),
+                 json=lineup_body2, timeout=30)
+c12a_ok = r.status_code == 200
+log("C12a PUT lineup with guest preferred_position omitted → 200", c12a_ok, f"status={r.status_code}")
+
+r = requests.get(f"{API}/matches/{gmid}", headers=auth_header(admin_tok), timeout=30)
+match = r.json()
+guest2 = match["lineup"]["team_a"][0] if match["lineup"]["team_a"] else None
+c12b_ok = bool(guest2) and guest2.get("preferred_position") is None and guest2.get("preferred_positions") == []
+log("C12b guest has preferred_position=null and preferred_positions=[]", c12b_ok, f"guest={guest2}")
+
+# C13
+lineup_body3 = {
+    "team_a": [{"name": "Bad Guest", "shirt_number": 77, "preferred_position": "ZZZ"}],
+    "team_b": reg_ids,
+    "team_c": [],
+    "reserves": [],
+}
+r = requests.put(f"{API}/matches/{gmid}/lineup", headers=auth_header(admin_tok),
+                 json=lineup_body3, timeout=30)
+c13_ok = r.status_code == 422
+log("C13 invalid preferred_position=ZZZ → 422", c13_ok, f"status={r.status_code} body={r.text[:200]}")
+
+# =====================================================
+# D) Unauth
+# =====================================================
+
+r = requests.get(f"{API}/availability", timeout=30)
+d14_ok = r.status_code == 401
+log("D14 GET /availability without auth → 401", d14_ok, f"status={r.status_code}")
+
+r = requests.post(f"{API}/availability", json={"date": today_str, "vote": "yes"}, timeout=30)
+d15_ok = r.status_code == 401
+log("D15 POST /availability without auth → 401", d15_ok, f"status={r.status_code}")
+
+# =====================================================
+# Cleanup
+# =====================================================
+try:
+    _db.availability.delete_many({})
+    _db.matches.delete_many({"auto_from_availability_date": {"$exists": True}})
+    _db.users.delete_many({"email": {"$regex": r"^avtest_"}})
+    _db.users.delete_many({"email": {"$regex": r"^guesttest_"}})
+    requests.delete(f"{API}/matches/{gmid}", headers=auth_header(admin_tok), timeout=30)
+except Exception as e:
+    print("cleanup warn:", e)
+
+# ---- Summary ----
+passed = sum(1 for _, ok, _ in results if ok)
+failed = [name for name, ok, _ in results if not ok]
+print(f"\n==== SUMMARY ====")
+print(f"Total: {len(results)}  Passed: {passed}  Failed: {len(failed)}")
+if failed:
+    print("Failed tests:")
+    for n in failed:
+        print(" -", n)
+sys.exit(0 if not failed else 1)

@@ -79,11 +79,53 @@ function formatDate(d: string) {
 }
 
 function formationCoords(n: number): { x: number; y: number }[] {
-  if (n === 3) return [{ x: 0.5, y: 0.94 }, { x: 0.25, y: 0.7 }, { x: 0.75, y: 0.7 }];
-  if (n === 5) return [{ x: 0.5, y: 0.94 }, { x: 0.22, y: 0.75 }, { x: 0.78, y: 0.75 }, { x: 0.33, y: 0.55 }, { x: 0.67, y: 0.55 }];
-  if (n === 6) return [{ x: 0.5, y: 0.94 }, { x: 0.25, y: 0.8 }, { x: 0.75, y: 0.8 }, { x: 0.25, y: 0.6 }, { x: 0.75, y: 0.6 }, { x: 0.5, y: 0.5 }];
-  if (n === 7) return [{ x: 0.5, y: 0.94 }, { x: 0.2, y: 0.78 }, { x: 0.5, y: 0.78 }, { x: 0.8, y: 0.78 }, { x: 0.25, y: 0.58 }, { x: 0.75, y: 0.58 }, { x: 0.5, y: 0.45 }];
-  return [{ x: 0.5, y: 0.95 }, { x: 0.15, y: 0.82 }, { x: 0.38, y: 0.82 }, { x: 0.62, y: 0.82 }, { x: 0.85, y: 0.82 }, { x: 0.18, y: 0.65 }, { x: 0.4, y: 0.65 }, { x: 0.6, y: 0.65 }, { x: 0.82, y: 0.65 }, { x: 0.4, y: 0.5 }, { x: 0.6, y: 0.5 }];
+  // Reasonable defaults for each team size. Last entry of each is the GK,
+  // followed by defenders, mids, forwards working up the pitch.
+  // y=0 is goal line, y=1 is centre line (we render team_a from bottom up).
+  if (n === 3) return [{ x: 0.5, y: 0.94 }, { x: 0.3, y: 0.65 }, { x: 0.7, y: 0.65 }];
+  if (n === 4) return [
+    { x: 0.5, y: 0.95 },
+    { x: 0.25, y: 0.75 }, { x: 0.75, y: 0.75 },
+    { x: 0.5, y: 0.5 },
+  ];
+  if (n === 5) return [
+    { x: 0.5, y: 0.94 },
+    { x: 0.22, y: 0.75 }, { x: 0.78, y: 0.75 },
+    { x: 0.33, y: 0.55 }, { x: 0.67, y: 0.55 },
+  ];
+  if (n === 6) return [
+    { x: 0.5, y: 0.94 },
+    { x: 0.25, y: 0.8 }, { x: 0.75, y: 0.8 },
+    { x: 0.25, y: 0.6 }, { x: 0.75, y: 0.6 },
+    { x: 0.5, y: 0.5 },
+  ];
+  if (n === 7) return [
+    { x: 0.5, y: 0.94 },
+    { x: 0.2, y: 0.78 }, { x: 0.5, y: 0.78 }, { x: 0.8, y: 0.78 },
+    { x: 0.25, y: 0.58 }, { x: 0.75, y: 0.58 },
+    { x: 0.5, y: 0.45 },
+  ];
+  if (n === 8) return [
+    // 1-3-3-1
+    { x: 0.5, y: 0.95 },
+    { x: 0.2, y: 0.78 }, { x: 0.5, y: 0.78 }, { x: 0.8, y: 0.78 },
+    { x: 0.25, y: 0.58 }, { x: 0.5, y: 0.6 }, { x: 0.75, y: 0.58 },
+    { x: 0.5, y: 0.42 },
+  ];
+  if (n === 9) return [
+    // 1-3-3-2
+    { x: 0.5, y: 0.95 },
+    { x: 0.2, y: 0.8 }, { x: 0.5, y: 0.8 }, { x: 0.8, y: 0.8 },
+    { x: 0.2, y: 0.6 }, { x: 0.5, y: 0.6 }, { x: 0.8, y: 0.6 },
+    { x: 0.35, y: 0.42 }, { x: 0.65, y: 0.42 },
+  ];
+  // n === 11 default 1-4-4-2
+  return [
+    { x: 0.5, y: 0.95 },
+    { x: 0.15, y: 0.82 }, { x: 0.38, y: 0.82 }, { x: 0.62, y: 0.82 }, { x: 0.85, y: 0.82 },
+    { x: 0.18, y: 0.65 }, { x: 0.4, y: 0.65 }, { x: 0.6, y: 0.65 }, { x: 0.82, y: 0.65 },
+    { x: 0.4, y: 0.5 }, { x: 0.6, y: 0.5 },
+  ];
 }
 
 function PlayerMarker({ player, x, y, flip, color, textColor }: {
@@ -151,6 +193,7 @@ export default function MatchDetail() {
   const [addPickerOpen, setAddPickerOpen] = useState(false);
   const [guestName, setGuestName] = useState('');
   const [guestShirt, setGuestShirt] = useState('');
+  const [guestPosition, setGuestPosition] = useState<string | null>(null);
 
   // Chat state
   type Comment = {
@@ -362,17 +405,20 @@ export default function MatchDetail() {
       name: guestName.trim(),
       shirt_number: Number.isFinite(shirt as number) ? (shirt as number) : null,
       profile_picture: null,
-      preferred_position: null,
+      preferred_position: guestPosition,
+      preferred_positions: guestPosition ? [guestPosition] : [],
       rating: 0,
       vote: 'yes' as any,
     };
     (entry as any).is_guest = true;
     (entry as any).guest_name = guestName.trim();
     (entry as any).guest_shirt = entry.shirt_number;
+    (entry as any).guest_position = guestPosition;
     setDraftExtras((prev) => [...prev, entry]);
     setDraftBuckets((b) => ({ ...b, [tempId]: 'reserves' }));
     setGuestName('');
     setGuestShirt('');
+    setGuestPosition(null);
   };
 
   const removeFromLineup = (uid: string) => {
@@ -402,6 +448,7 @@ export default function MatchDetail() {
         groups[bucket].push({
           name: src.guest_name || src.name,
           shirt_number: src.guest_shirt ?? src.shirt_number ?? null,
+          preferred_position: src.guest_position ?? src.preferred_position ?? null,
         });
       } else {
         groups[bucket].push(uid);
@@ -932,6 +979,38 @@ export default function MatchDetail() {
                   >
                     <Ionicons name="add" size={20} color="#fff" />
                   </TouchableOpacity>
+                </View>
+                <View style={{ marginTop: 10 }}>
+                  <Text style={[styles.label, { marginBottom: 4 }]}>POSITION (optional)</Text>
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
+                    {(['GK', 'CB', 'LB', 'RB', 'CDM', 'CM', 'CAM', 'LW', 'ST', 'RW', 'ANY'] as const).map((p) => {
+                      const active = guestPosition === p;
+                      return (
+                        <TouchableOpacity
+                          key={p}
+                          testID={`guest-pos-${p}-btn`}
+                          onPress={() => setGuestPosition(active ? null : p)}
+                          activeOpacity={0.85}
+                          style={{
+                            paddingHorizontal: 10,
+                            height: 30,
+                            borderRadius: radii.sm,
+                            borderWidth: 1,
+                            borderColor: active ? colors.primary : colors.border,
+                            backgroundColor: active ? colors.primary : 'transparent',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
+                        >
+                          <Text style={{
+                            color: active ? '#fff' : colors.textSecondary,
+                            fontSize: 12,
+                            fontWeight: '700',
+                          }}>{p}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
                 </View>
               </View>
 

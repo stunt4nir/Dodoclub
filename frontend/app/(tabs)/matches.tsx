@@ -67,6 +67,266 @@ function todayPlusDays(d: number): Date {
   return out;
 }
 
+type AvailDay = {
+  date: string;
+  yes_count: number; no_count: number; reserve_count: number;
+  my_vote: 'yes' | 'no' | 'reserve' | null;
+  yes: any[]; no: any[]; reserve: any[];
+  auto_match_id: string | null;
+};
+type AvailResp = { days: AvailDay[]; threshold: number; auto_team_size: number };
+
+function AvailabilityPanel({
+  data,
+  busyDate,
+  expanded,
+  onToggleExpand,
+  onVote,
+  onOpenMatch,
+}: {
+  data: AvailResp | null;
+  busyDate: string | null;
+  expanded: string | null;
+  onToggleExpand: (date: string) => void;
+  onVote: (date: string, vote: 'yes' | 'no' | 'reserve') => void;
+  onOpenMatch: (mid: string) => void;
+}) {
+  if (!data) return null;
+  return (
+    <View style={availStyles.wrap}>
+      <View style={availStyles.headerRow}>
+        <Ionicons name="calendar-outline" size={18} color={colors.primary} />
+        <Text style={availStyles.title}>THIS WEEK · WHO'S IN?</Text>
+        <Text style={availStyles.threshold}>
+          Auto-match @ {data.threshold} ✓ ({data.auto_team_size}v{data.auto_team_size})
+        </Text>
+      </View>
+      <Muted style={{ marginBottom: 8 }}>
+        Vote your availability for the next 7 days. When 8 people say YES on a day, a {data.auto_team_size}v{data.auto_team_size} match auto-creates at 19:00.
+      </Muted>
+      {data.days.map((d) => {
+        const dt = new Date(d.date + 'T12:00:00');
+        const idx = data.days.findIndex((x) => x.date === d.date);
+        const label =
+          idx === 0
+            ? 'Today'
+            : idx === 1
+            ? 'Tomorrow'
+            : dt.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+        const isExpanded = expanded === d.date;
+        const reachedThreshold = d.yes_count >= data.threshold;
+        const my = d.my_vote;
+        const busy = busyDate === d.date;
+        return (
+          <View key={d.date} style={availStyles.dayWrap}>
+            <TouchableOpacity
+              testID={`avail-day-${d.date}`}
+              style={[availStyles.dayRow, isExpanded && { borderColor: colors.primary }]}
+              activeOpacity={0.85}
+              onPress={() => onToggleExpand(d.date)}
+            >
+              <Text style={availStyles.dayLabel}>{label}</Text>
+              <View style={availStyles.tally}>
+                <Text style={[availStyles.tallyChip, { color: colors.success, borderColor: colors.success }]}>
+                  ✓ {d.yes_count}
+                </Text>
+                <Text style={[availStyles.tallyChip, { color: colors.warning, borderColor: colors.warning }]}>
+                  ⏳ {d.reserve_count}
+                </Text>
+                <Text style={[availStyles.tallyChip, { color: colors.danger, borderColor: colors.danger }]}>
+                  ✕ {d.no_count}
+                </Text>
+              </View>
+              {d.auto_match_id && (
+                <TouchableOpacity
+                  testID={`avail-open-match-${d.date}`}
+                  onPress={(e) => {
+                    e.stopPropagation();
+                    onOpenMatch(d.auto_match_id as string);
+                  }}
+                  style={availStyles.matchBadge}
+                >
+                  <Ionicons name="trophy" size={12} color="#fff" />
+                  <Text style={availStyles.matchBadgeText}>MATCH</Text>
+                </TouchableOpacity>
+              )}
+              <Ionicons name={isExpanded ? 'chevron-up' : 'chevron-down'} size={16} color={colors.textMuted} />
+            </TouchableOpacity>
+            {isExpanded && (
+              <View style={availStyles.expanded}>
+                <View style={availStyles.voteBtnRow}>
+                  {(['yes', 'reserve', 'no'] as const).map((v) => {
+                    const active = my === v;
+                    const colour = v === 'yes' ? colors.success : v === 'reserve' ? colors.warning : colors.danger;
+                    const label = v === 'yes' ? "I'M IN" : v === 'reserve' ? 'RESERVE' : "CAN'T";
+                    return (
+                      <TouchableOpacity
+                        key={v}
+                        testID={`avail-vote-${d.date}-${v}`}
+                        disabled={busy}
+                        onPress={() => onVote(d.date, v)}
+                        style={[
+                          availStyles.voteBtn,
+                          { borderColor: colour, backgroundColor: active ? colour : 'transparent' },
+                        ]}
+                        activeOpacity={0.85}
+                      >
+                        {busy ? (
+                          <ActivityIndicator size="small" color={active ? '#fff' : colour} />
+                        ) : (
+                          <Text style={[availStyles.voteBtnText, { color: active ? '#fff' : colour }]}>
+                            {label}
+                          </Text>
+                        )}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+                {d.yes.length > 0 && (
+                  <View style={{ marginTop: 8 }}>
+                    <Text style={availStyles.voterLabel}>YES ({d.yes_count})</Text>
+                    <Text style={availStyles.voterList} numberOfLines={2}>
+                      {d.yes.map((p: any) => p.name).join(' · ')}
+                    </Text>
+                  </View>
+                )}
+                {!reachedThreshold && d.yes_count > 0 && (
+                  <Text style={availStyles.progress}>
+                    {data.threshold - d.yes_count} more YES to auto-create the match
+                  </Text>
+                )}
+              </View>
+            )}
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+const availStyles = StyleSheet.create({
+  wrap: {
+    backgroundColor: colors.surface,
+    borderRadius: radii.lg,
+    padding: spacing.md,
+    marginBottom: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 6,
+  },
+  title: {
+    color: colors.textPrimary,
+    fontWeight: '900',
+    letterSpacing: 1.2,
+    fontSize: 13,
+    flex: 1,
+  },
+  threshold: {
+    color: colors.primary,
+    fontWeight: '800',
+    fontSize: 11,
+  },
+  dayWrap: {
+    marginTop: 6,
+  },
+  dayRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.background,
+  },
+  dayLabel: {
+    color: colors.textPrimary,
+    fontWeight: '800',
+    fontSize: 14,
+    minWidth: 80,
+  },
+  tally: {
+    flex: 1,
+    flexDirection: 'row',
+    gap: 4,
+    flexWrap: 'wrap',
+  },
+  tallyChip: {
+    fontSize: 11,
+    fontWeight: '900',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+    overflow: 'hidden',
+  },
+  matchBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: colors.primary,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+    borderRadius: 4,
+  },
+  matchBadgeText: {
+    color: '#fff',
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 0.8,
+  },
+  expanded: {
+    marginTop: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    borderRadius: radii.md,
+    backgroundColor: '#0a0a0a',
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  voteBtnRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  voteBtn: {
+    flex: 1,
+    height: 36,
+    borderRadius: radii.md,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  voteBtnText: {
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 0.8,
+  },
+  voterLabel: {
+    color: colors.textMuted,
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 1,
+    marginBottom: 2,
+  },
+  voterList: {
+    color: colors.textPrimary,
+    fontSize: 12,
+  },
+  progress: {
+    marginTop: 8,
+    color: colors.warning,
+    fontSize: 11,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+});
+
 export default function MatchesScreen() {
   const router = useRouter();
   const { user } = useAuth();
@@ -75,6 +335,19 @@ export default function MatchesScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  // Availability poll state
+  type AvailDay = {
+    date: string;
+    yes_count: number; no_count: number; reserve_count: number;
+    my_vote: 'yes' | 'no' | 'reserve' | null;
+    yes: any[]; no: any[]; reserve: any[];
+    auto_match_id: string | null;
+  };
+  type AvailResp = { days: AvailDay[]; threshold: number; auto_team_size: number };
+  const [avail, setAvail] = useState<AvailResp | null>(null);
+  const [availBusy, setAvailBusy] = useState<string | null>(null);
+  const [expandedDay, setExpandedDay] = useState<string | null>(null);
 
   // form state
   const [title, setTitle] = useState('');
@@ -91,8 +364,12 @@ export default function MatchesScreen() {
 
   const load = useCallback(async () => {
     try {
-      const data = await api<Match[]>('/matches');
-      setMatches(data);
+      const [m, a] = await Promise.all([
+        api<Match[]>('/matches'),
+        api<AvailResp>('/availability').catch(() => null),
+      ]);
+      setMatches(m);
+      if (a) setAvail(a);
     } catch {
       /* ignore */
     } finally {
@@ -100,6 +377,34 @@ export default function MatchesScreen() {
       setRefreshing(false);
     }
   }, []);
+
+  const voteAvail = useCallback(
+    async (date: string, vote: 'yes' | 'no' | 'reserve') => {
+      setAvailBusy(date);
+      try {
+        const res = await api<{ auto_match_id: string | null }>(
+          '/availability',
+          { method: 'POST', body: { date, vote } }
+        );
+        await load();
+        if (res.auto_match_id) {
+          Alert.alert(
+            '🎉 Match auto-created!',
+            `8 players are in for ${date}. A match has been created at 19:00 — open it to confirm or edit details.`,
+            [
+              { text: 'Open match', onPress: () => router.push(`/match/${res.auto_match_id}`) },
+              { text: 'Later', style: 'cancel' },
+            ]
+          );
+        }
+      } catch (e: any) {
+        Alert.alert('Error', e.message || 'Failed to save vote');
+      } finally {
+        setAvailBusy(null);
+      }
+    },
+    [load, router]
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -225,6 +530,16 @@ export default function MatchesScreen() {
         maxToRenderPerBatch={6}
         windowSize={7}
         removeClippedSubviews
+        ListHeaderComponent={
+          <AvailabilityPanel
+            data={avail}
+            busyDate={availBusy}
+            expanded={expandedDay}
+            onToggleExpand={(d) => setExpandedDay((cur) => (cur === d ? null : d))}
+            onVote={voteAvail}
+            onOpenMatch={(mid) => router.push(`/match/${mid}`)}
+          />
+        }
         refreshControl={
           <RefreshControl
             refreshing={refreshing}

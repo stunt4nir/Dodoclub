@@ -213,10 +213,58 @@ backend:
           agent: "testing"
           comment: "11/11 PASS in /app/backend_test_devmode.py. (A1) With DEV_MODE=1 (current .env), POST /api/auth/forgot-password {email: admin@clubdodo.com} → 200 with non-null 6-digit dev_code. (A2) Used that code to POST /api/auth/reset-password with temp password → 200; login with temp password → 200. (A3) Flipped backend/.env to DEV_MODE=\"0\" and restarted backend via supervisor; POST /api/auth/forgot-password for real admin email → 200 with dev_code: null (key present, value null, never leaked). Bogus email also returns dev_code: null — identical generic response so no user enumeration. (A4) Restored DEV_MODE=\"1\", restarted backend, verified forgot-password returns a real code again, then reset admin password back to dodo2026 so /app/memory/test_credentials.md stays valid. (B5-B8) Regression smoke: POST /api/auth/login with admin@clubdodo.com/dodo2026 → 200, GET /api/auth/me → 200 role=admin, GET /api/matches → 200 list, GET /api/config → 200 (public, no auth). Env file confirmed back to DEV_MODE=\"1\". No regressions."
 
+  - task: "Availability poll GET/POST /api/availability (7-day structure, per-user vote upsert, date window validation)"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: "A1-A4 all PASS. GET /availability as admin returns 200 with days[7] (each has date YYYY-MM-DD, yes/no/reserve_count, my_vote, yes/no/reserve arrays, auto_match_id) + threshold=8 + auto_team_size=4. POST {date: today, vote: 'yes'} returns 200 with auto_match_id=null; GET reflects my_vote='yes', yes_count=1. Re-POST with vote='no' updates via upsert (unique index date+user_id): my_vote='no', yes_count=0, no_count=1. Past date (yesterday) → 400 'Date must be within the next 7 days (today inclusive)'. Future +8 days → 400 (same message). Malformed '2026/13/01' → 400 'date must be YYYY-MM-DD'."
+
+  - task: "Auto-match creation when yes votes >= 8 on same date (idempotent)"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: "B5-B9 all PASS. Registered 7 fresh users (avtest_1..7). Admin + p1..p6 voted yes on date=today+3 (7 yeses): each POST returned auto_match_id=null, GET showed yes_count=7/auto_match_id=null. p7 vote yes triggered auto-create: POST body contained auto_match_id as valid UUID. GET /availability for that day surfaced same auto_match_id and yes_count=8. GET /matches/{auto_mid} returned 200 with team_size=4, match_type='friendly', status='voting', votes containing exactly the 8 expected user_ids all mapped to 'yes'; auto_from_availability_date in DB matches date. 9th user voted yes on same date → returned the SAME auto_match_id (idempotent, no new match created). DB count of matches with that auto_from_availability_date == 1."
+
+  - task: "GuestRef preferred_position field in PUT /api/matches/{mid}/lineup"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: "C11-C13 all PASS. Built team_size=4 friendly match (admin creator); admin + 3 dummies voted yes. PUT lineup with team_a=[guest {name, shirt_number, preferred_position:'CAM'}] + team_b=[3 registered ids] → 200; GET /matches/{mid} shows guest stored with preferred_position='CAM' AND preferred_positions=['CAM'] (synthetic user_id prefixed 'guest:', is_guest=true). PUT guest without preferred_position → 200; GET shows preferred_position=null AND preferred_positions=[]. PUT guest with preferred_position='ZZZ' → 422 (pydantic Literal validation on POSITION_LITERAL enforced)."
+
+  - task: "Availability endpoints require authentication"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: false
+    status_history:
+        - working: true
+          agent: "testing"
+          comment: "D14-D15 PASS. GET /api/availability without Authorization header → 401 'Not authenticated'. POST /api/availability without Authorization header → 401. Dependency Depends(get_current_user) enforces Bearer token on both."
+
 metadata:
   created_by: "testing_agent"
-  version: "1.4"
-  test_sequence: 5
+  version: "1.5"
+  test_sequence: 6
   run_ui: false
 
 test_plan:

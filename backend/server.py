@@ -11,6 +11,7 @@ import bcrypt
 import jwt
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional, Literal, Union
+import re
 
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request
 from starlette.middleware.cors import CORSMiddleware
@@ -168,6 +169,7 @@ class VoteIn(BaseModel):
 class GuestRef(BaseModel):
     name: str = Field(min_length=1, max_length=40)
     shirt_number: Optional[int] = Field(default=None, ge=1, le=99)
+    preferred_position: Optional[POSITION_LITERAL] = None
 
 
 class LineupOverrideIn(BaseModel):
@@ -214,6 +216,11 @@ class CommentIn(BaseModel):
     text: str = Field(min_length=1, max_length=500)
 
 
+class AvailabilityIn(BaseModel):
+    date: str  # YYYY-MM-DD (local club timezone)
+    vote: Literal["yes", "no", "reserve"]
+
+
 # ---------- Startup ----------
 @app.on_event("startup")
 async def startup():
@@ -223,6 +230,8 @@ async def startup():
     await db.password_reset_tokens.create_index("expires_at", expireAfterSeconds=0)
     await db.password_reset_tokens.create_index("email")
     await db.match_comments.create_index([("match_id", 1), ("created_at", 1)])
+    await db.availability.create_index([("date", 1)])
+    await db.availability.create_index([("date", 1), ("user_id", 1)], unique=True)
     # Seed admin
     admin_email = os.environ["ADMIN_EMAIL"].lower()
     admin_password = os.environ["ADMIN_PASSWORD"]
@@ -738,7 +747,8 @@ async def override_lineup(
                         "name": entry.name,
                         "shirt_number": entry.shirt_number,
                         "profile_picture": None,
-                        "preferred_position": None,
+                        "preferred_position": entry.preferred_position,
+                        "preferred_positions": [entry.preferred_position] if entry.preferred_position else [],
                         "rating": 0,
                         "vote": "guest",
                         "is_guest": True,
@@ -1044,6 +1054,150 @@ async def delete_comment(mid: str, cid: str, user=Depends(get_current_user)):
         raise HTTPException(403, "Not allowed to delete this comment")
     await db.match_comments.delete_one({"id": cid})
     return {"ok": True}
+
+
+# ---------- Availability (Week ahead poll) ----------
+AUTO_MATCH_THRESHOLD = 8
+AUTO_MATCH_KICKOFF_HOUR = 19
+AUTO_MATCH_TEAM_SIZE = 4
+DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _next_seven_days() -> List[str]:
+    today = datetime.now(timezone.utc).date()
+    return [(today + timedelta(days=i)).isoformat() for i in range(7)]
+
+
+async def _maybe_auto_create_match(date_str: str) -> Optional[dict]:
+    """If a date has >= AUTO_MATCH_THRESHOLD 'yes' availability votes and no
+    match yet auto-created for that date, build one and import yeses as votes."""
+    existing = await db.matches.find_one(
+        {"auto_from_availability_date": date_str}, {"_id": 0}
+    )
+    if existing:
+        return existing
+    cur = db.availability.find({"date": date_str, "vote": "yes"})
+    yes_user_ids = [d["user_id"] async for d in cur]
+    if len(yes_user_ids) < AUTO_MATCH_THRESHOLD:
+        return None
+    try:
+        y, m, d = [int(p) for p in date_str.split("-")]
+        kickoff = datetime(y, m, d, AUTO_MATCH_KICKOFF_HOUR, 0, tzinfo=timezone.utc)
+    except Exception:
+        return None
+    new_match = {
+        "id": str(uuid.uuid4()),
+        "title": f"Auto match {date_str}",
+        "date": kickoff.isoformat(),
+        "team_size": AUTO_MATCH_TEAM_SIZE,
+        "match_type": "friendly",
+        "third_team_enabled": False,
+        "votes": {uid: "yes" for uid in yes_user_ids},
+        "lineup": None,
+        "score_a": 0, "score_b": 0, "score_c": 0,
+        "status": "voting",
+        "result": None,
+        "timer_running": False,
+        "timer_started_at": None,
+        "timer_total_seconds": 0,
+        "auto_from_availability_date": date_str,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_by": "system",
+    }
+    await db.matches.insert_one(new_match)
+    return new_match
+
+
+def _avail_doc_to_dict(d: dict) -> dict:
+    return {
+        "user_id": d["user_id"],
+        "date": d["date"],
+        "vote": d.get("vote"),
+        "name": d.get("name"),
+        "profile_picture": d.get("profile_picture"),
+        "shirt_number": d.get("shirt_number"),
+    }
+
+
+@api.get("/availability")
+async def list_availability(user=Depends(get_current_user)):
+    """Return the next 7 days with per-day aggregated tallies, the caller's own
+    vote per day, the full voter lists per day, and any auto-created match id."""
+    days = _next_seven_days()
+    out = []
+    cur = db.availability.find({"date": {"$in": days}}, {"_id": 0})
+    by_date: dict = {d: [] for d in days}
+    async for doc in cur:
+        by_date.setdefault(doc["date"], []).append(doc)
+    auto_matches = {
+        m["auto_from_availability_date"]: m["id"]
+        async for m in db.matches.find(
+            {"auto_from_availability_date": {"$in": days}}, {"_id": 0, "id": 1, "auto_from_availability_date": 1}
+        )
+    }
+    for d in days:
+        entries = by_date.get(d, [])
+        yes = [e for e in entries if e.get("vote") == "yes"]
+        no = [e for e in entries if e.get("vote") == "no"]
+        reserve = [e for e in entries if e.get("vote") == "reserve"]
+        my_vote = next((e.get("vote") for e in entries if e["user_id"] == user["id"]), None)
+        out.append({
+            "date": d,
+            "yes_count": len(yes),
+            "no_count": len(no),
+            "reserve_count": len(reserve),
+            "my_vote": my_vote,
+            "yes": [_avail_doc_to_dict(e) for e in yes],
+            "no": [_avail_doc_to_dict(e) for e in no],
+            "reserve": [_avail_doc_to_dict(e) for e in reserve],
+            "auto_match_id": auto_matches.get(d),
+        })
+    return {
+        "days": out,
+        "threshold": AUTO_MATCH_THRESHOLD,
+        "auto_team_size": AUTO_MATCH_TEAM_SIZE,
+    }
+
+
+@api.post("/availability")
+async def set_availability(data: AvailabilityIn, user=Depends(get_current_user)):
+    if not DAY_RE.match(data.date):
+        raise HTTPException(400, "date must be YYYY-MM-DD")
+    today = datetime.now(timezone.utc).date()
+    try:
+        y, m, dd = [int(p) for p in data.date.split("-")]
+        target = datetime(y, m, dd).date()
+    except Exception:
+        raise HTTPException(400, "Invalid date")
+    delta_days = (target - today).days
+    if delta_days < 0 or delta_days > 6:
+        raise HTTPException(400, "Date must be within the next 7 days (today inclusive)")
+
+    doc = {
+        "user_id": user["id"],
+        "date": data.date,
+        "vote": data.vote,
+        "name": user.get("name"),
+        "profile_picture": user.get("profile_picture"),
+        "shirt_number": user.get("shirt_number"),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.availability.update_one(
+        {"user_id": user["id"], "date": data.date},
+        {"$set": doc},
+        upsert=True,
+    )
+
+    auto_match = None
+    if data.vote == "yes":
+        auto_match = await _maybe_auto_create_match(data.date)
+
+    return {
+        "ok": True,
+        "date": data.date,
+        "vote": data.vote,
+        "auto_match_id": auto_match["id"] if auto_match else None,
+    }
 
 
 @api.post("/admin/reset")
