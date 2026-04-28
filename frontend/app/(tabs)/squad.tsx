@@ -198,10 +198,10 @@ export default function SquadScreen() {
             </View>
             <View style={styles.ratingPill}>
               <Text style={styles.ratingValue}>
-                {tab === 'rating' ? item.rating : item.league_points}
+                {tab === 'rating' ? `${(item.rating ?? 0).toFixed(1)}` : item.league_points}
               </Text>
               <Text style={styles.ratingLabel}>
-                {tab === 'rating' ? 'RATING' : 'POINTS'}
+                {tab === 'rating' ? '★ / 10' : 'POINTS'}
               </Text>
             </View>
             {isAdmin && item.id !== user?.id && (

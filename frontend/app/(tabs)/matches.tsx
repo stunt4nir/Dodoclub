@@ -19,6 +19,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { api } from '../../src/api';
 import { useAuth } from '../../src/auth';
+import { scheduleMatchReminders } from '../../src/notifications';
 import { colors, spacing, radii } from '../../src/theme';
 import { Display, Overline, Muted, Title } from '../../src/typography';
 
@@ -158,7 +159,7 @@ function AvailabilityPanel({
                   {(['yes', 'reserve', 'no'] as const).map((v) => {
                     const active = my === v;
                     const colour = v === 'yes' ? colors.success : v === 'reserve' ? colors.warning : colors.danger;
-                    const label = v === 'yes' ? "I'M IN" : v === 'reserve' ? 'RESERVE' : "CAN'T";
+                    const iconName = v === 'yes' ? 'checkmark-circle' : v === 'reserve' ? 'time' : 'close-circle';
                     return (
                       <TouchableOpacity
                         key={v}
@@ -174,9 +175,7 @@ function AvailabilityPanel({
                         {busy ? (
                           <ActivityIndicator size="small" color={active ? '#fff' : colour} />
                         ) : (
-                          <Text style={[availStyles.voteBtnText, { color: active ? '#fff' : colour }]}>
-                            {label}
-                          </Text>
+                          <Ionicons name={iconName as any} size={26} color={active ? '#fff' : colour} />
                         )}
                       </TouchableOpacity>
                     );
@@ -370,13 +369,32 @@ export default function MatchesScreen() {
       ]);
       setMatches(m);
       if (a) setAvail(a);
+      // Auto-schedule local notification reminders for upcoming matches
+      // (only on native — web ignores). Idempotent thanks to deterministic ids.
+      try {
+        const myId = user?.id;
+        if (myId) {
+          for (const match of m) {
+            if (!match.date) continue;
+            const myVote = (match.votes || []).find((v: any) => v.user_id === myId)?.vote ?? null;
+            scheduleMatchReminders({
+              matchId: match.id,
+              matchDateIso: match.date,
+              iVoted: myVote,
+              matchStatus: match.status,
+            }).catch(() => {});
+          }
+        }
+      } catch {
+        /* ignore */
+      }
     } catch {
       /* ignore */
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [user?.id]);
 
   const voteAvail = useCallback(
     async (date: string, vote: 'yes' | 'no' | 'reserve') => {

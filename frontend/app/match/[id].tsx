@@ -49,7 +49,7 @@ type Match = {
   duration_minutes: number;
   timer_started_at: string | null;
   timer_ended_at: string | null;
-  status: 'voting' | 'scheduled' | 'played';
+  status: 'voting' | 'scheduled' | 'played' | 'completed';
   created_by?: string;
   votes: Vote[];
   lineup?: {
@@ -66,6 +66,11 @@ type Match = {
     team_c_score?: number | null;
     stats: { user_id: string; goals: number; assists: number }[];
   } | null;
+  motm?: {
+    votes: Record<string, number>;
+    winner_id: string | null;
+    total: number;
+  };
 };
 
 type Bucket = 'team_a' | 'team_b' | 'team_c' | 'reserves';
@@ -240,6 +245,19 @@ export default function MatchDetail() {
   const [pitchSel, setPitchSel] = useState<{ team: 'a' | 'b'; index: number } | null>(null);
   const [swapBusy, setSwapBusy] = useState(false);
 
+  // MOTM state
+  type MotmInfo = {
+    open: boolean;
+    can_vote: boolean;
+    candidates: string[];
+    my_choice: string | null;
+    votes: Record<string, number>;
+    winner_id: string | null;
+    total: number;
+  };
+  const [motm, setMotm] = useState<MotmInfo | null>(null);
+  const [motmBusy, setMotmBusy] = useState(false);
+
   const load = useCallback(async () => {
     if (!id) return;
     try {
@@ -262,13 +280,40 @@ export default function MatchDetail() {
     }
   }, [id]);
 
+  const loadMotm = useCallback(async () => {
+    if (!id) return;
+    try {
+      const m = await api<MotmInfo>(`/matches/${id}/motm`);
+      setMotm(m);
+    } catch {
+      setMotm(null);
+    }
+  }, [id]);
+
   useFocusEffect(
     useCallback(() => {
       loadComments();
+      loadMotm();
       const t = setInterval(loadComments, 8000);
       return () => clearInterval(t);
-    }, [loadComments])
+    }, [loadComments, loadMotm])
   );
+
+  const castMotm = async (candidateId: string) => {
+    setMotmBusy(true);
+    try {
+      await api(`/matches/${id}/motm/vote`, {
+        method: 'POST',
+        body: { candidate_id: candidateId },
+      });
+      await loadMotm();
+      await load();
+    } catch (e: any) {
+      Alert.alert('MOTM vote failed', e.message || 'Try again');
+    } finally {
+      setMotmBusy(false);
+    }
+  };
 
   const postComment = async () => {
     const txt = commentDraft.trim();
@@ -686,9 +731,8 @@ export default function MatchDetail() {
                     myVote === vc.v && { backgroundColor: `${vc.color}4a`, borderWidth: 3 },
                   ]}
                 >
-                  <Ionicons name={vc.icon} size={28} color={vc.color} />
-                  <Text style={[styles.voteLabel, { color: vc.color }]}>{vc.label}</Text>
-                  <Text style={styles.voteCount}>{vc.count}</Text>
+                  <Ionicons name={vc.icon} size={36} color={vc.color} />
+                  <Text style={[styles.voteCount, { color: vc.color, fontWeight: '900', fontSize: 14 }]}>{vc.count}</Text>
                 </TouchableOpacity>
               ))}
             </View>
@@ -826,6 +870,69 @@ export default function MatchDetail() {
           </TouchableOpacity>
         )}
 
+        {/* ---------- Man of the Match ---------- */}
+        {motm && motm.open && (
+          <View style={styles.motmCard}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+              <Ionicons name="trophy" size={20} color="#FFD700" />
+              <Text style={styles.motmTitle}>MAN OF THE MATCH</Text>
+              <Text style={styles.motmTotal}>{motm.total} vote{motm.total === 1 ? '' : 's'}</Text>
+            </View>
+            {!motm.can_vote && (
+              <Muted style={{ fontSize: 12, marginBottom: 8 }}>
+                Only players who said YES can vote.
+              </Muted>
+            )}
+            {motm.candidates.length === 0 ? (
+              <Muted>No candidates yet (no players in the lineup).</Muted>
+            ) : (
+              motm.candidates.map((cid) => {
+                const player =
+                  [...(match.lineup?.team_a || []), ...(match.lineup?.team_b || []), ...(match.lineup?.team_c || [])]
+                    .find((p: any) => p.user_id === cid);
+                if (!player) return null;
+                const count = motm.votes[cid] || 0;
+                const myChoice = motm.my_choice === cid;
+                const isWinner = motm.winner_id === cid && motm.total > 0;
+                const isMe = user?.id === cid;
+                const pct = motm.total > 0 ? Math.round((count / motm.total) * 100) : 0;
+                return (
+                  <TouchableOpacity
+                    key={cid}
+                    testID={`motm-vote-${cid}`}
+                    disabled={!motm.can_vote || isMe || motmBusy}
+                    onPress={() => castMotm(cid)}
+                    activeOpacity={0.85}
+                    style={[
+                      styles.motmRow,
+                      myChoice && { borderColor: colors.primary, backgroundColor: '#1f1105' },
+                      isWinner && { borderColor: '#FFD700' },
+                      (isMe || !motm.can_vote) && { opacity: 0.65 },
+                    ]}
+                  >
+                    <Avatar uri={player.profile_picture} size={32} name={player.name} shirt={player.shirt_number || undefined} />
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.motmName} numberOfLines={1}>
+                        {player.name}{isMe ? ' (you)' : ''}
+                      </Text>
+                      {motm.total > 0 && (
+                        <View style={styles.motmBarBg}>
+                          <View style={[styles.motmBarFill, { width: `${pct}%`, backgroundColor: isWinner ? '#FFD700' : colors.primary }]} />
+                        </View>
+                      )}
+                    </View>
+                    {isWinner && <Ionicons name="trophy" size={18} color="#FFD700" />}
+                    <Text style={[styles.motmCount, isWinner && { color: '#FFD700' }]}>
+                      {count}
+                    </Text>
+                    {myChoice && <Ionicons name="checkmark-circle" size={18} color={colors.primary} />}
+                  </TouchableOpacity>
+                );
+              })
+            )}
+          </View>
+        )}
+
         {/* ----------- Match Chat ----------- */}
         <View style={styles.chatSection}>
           <View style={styles.chatHeader}>
@@ -949,22 +1056,59 @@ export default function MatchDetail() {
                 <Muted style={{ fontSize: 11, marginTop: 4 }}>League points: winner +3, draw +1, loser +0</Muted>
               )}
 
-              <Text style={[styles.label, { marginTop: spacing.md }]}>Tap + to add goals & assists</Text>
+              <Text style={[styles.label, { marginTop: spacing.md }]}>Tap + to add goals & assists (team score auto-updates)</Text>
               {allPlayersForResult.length === 0 ? (
                 <Muted>No lineup yet. A lineup will be auto-generated from yes voters when you save.</Muted>
               ) : (
                 allPlayersForResult.map((p) => {
                   const stat = playerStats[p.user_id] || { goals: 0, assists: 0 };
+                  // Determine which team this player is in for auto-score bump
+                  const playerTeam: 'a' | 'b' | 'c' | null = teamA.some((x: any) => x.user_id === p.user_id)
+                    ? 'a'
+                    : teamB.some((x: any) => x.user_id === p.user_id)
+                    ? 'b'
+                    : teamC.some((x: any) => x.user_id === p.user_id)
+                    ? 'c'
+                    : null;
+                  const teamColour = playerTeam === 'a'
+                    ? colors.danger
+                    : playerTeam === 'b'
+                    ? colors.textPrimary
+                    : playerTeam === 'c'
+                    ? colors.warning
+                    : colors.textMuted;
+                  const teamLabel = playerTeam === 'a' ? 'A' : playerTeam === 'b' ? 'B' : playerTeam === 'c' ? 'C' : '?';
                   return (
                     <View key={p.user_id} style={styles.statRow}>
                       <Avatar uri={p.profile_picture} size={36} name={p.name} shirt={p.shirt_number || undefined} />
-                      <Text style={styles.statName} numberOfLines={1}>{p.name}</Text>
+                      <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                        <View style={{
+                          width: 22, height: 22, borderRadius: 11, alignItems: 'center', justifyContent: 'center',
+                          backgroundColor: teamColour,
+                        }}>
+                          <Text style={{ color: playerTeam === 'b' ? '#000' : '#fff', fontSize: 11, fontWeight: '900' }}>{teamLabel}</Text>
+                        </View>
+                        <Text style={styles.statName} numberOfLines={1}>{p.name}</Text>
+                      </View>
                       <View style={{ alignItems: 'center', gap: 2 }}>
                         <Text style={styles.statLabel}>GOAL</Text>
                         <Stepper
                           testID={`goals-${p.user_id}`}
                           value={stat.goals}
-                          onChange={(v) => setPlayerStats((s) => ({ ...s, [p.user_id]: { goals: v, assists: s[p.user_id]?.assists || 0 } }))}
+                          onChange={(v) => {
+                            const oldGoals = playerStats[p.user_id]?.goals || 0;
+                            const delta = v - oldGoals;
+                            setPlayerStats((s) => ({
+                              ...s,
+                              [p.user_id]: { goals: v, assists: s[p.user_id]?.assists || 0 },
+                            }));
+                            // Auto-update the corresponding team's score by the delta
+                            if (delta !== 0 && playerTeam) {
+                              if (playerTeam === 'a') setScoreA((cur) => Math.max(0, cur + delta));
+                              else if (playerTeam === 'b') setScoreB((cur) => Math.max(0, cur + delta));
+                              else if (playerTeam === 'c') setScoreC((cur) => Math.max(0, cur + delta));
+                            }
+                          }}
                         />
                       </View>
                       <View style={{ alignItems: 'center', gap: 2 }}>
@@ -1288,6 +1432,60 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     fontSize: 12,
     fontWeight: '600',
+  },
+  motmCard: {
+    marginTop: spacing.lg,
+    padding: spacing.md,
+    backgroundColor: colors.surface,
+    borderRadius: radii.lg,
+    borderWidth: 1,
+    borderColor: '#FFD70044',
+  },
+  motmTitle: {
+    color: colors.textPrimary,
+    fontWeight: '900',
+    letterSpacing: 1.2,
+    fontSize: 13,
+    flex: 1,
+  },
+  motmTotal: {
+    color: colors.textMuted,
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  motmRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 8,
+    backgroundColor: colors.background,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginBottom: 6,
+  },
+  motmName: {
+    color: colors.textPrimary,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  motmCount: {
+    color: colors.textPrimary,
+    fontSize: 14,
+    fontWeight: '900',
+    minWidth: 24,
+    textAlign: 'right',
+  },
+  motmBarBg: {
+    height: 4,
+    backgroundColor: colors.border,
+    borderRadius: 2,
+    marginTop: 4,
+    overflow: 'hidden',
+  },
+  motmBarFill: {
+    height: 4,
   },
   midLine: { position: 'absolute', top: '50%', left: 0, right: 0, height: 2, backgroundColor: 'rgba(255,255,255,0.35)' },
   midCircle: { position: 'absolute', top: '50%', left: '50%', width: 90, height: 90, marginLeft: -45, marginTop: -45, borderRadius: 45, borderWidth: 2, borderColor: 'rgba(255,255,255,0.35)' },

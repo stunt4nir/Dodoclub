@@ -58,8 +58,14 @@ def create_token(user_id: str, email: str) -> str:
 
 
 def compute_rating(goals: int, assists: int, matches_played: int) -> float:
-    # simple transparent formula
-    return round(goals * 3 + assists * 2 + matches_played * 1, 2)
+    """Player rating on a 0–10 scale.
+
+    Heuristic: `(goals*3 + assists*2 + matches*0.5) / 6`, capped at 10.0.
+    A new player without any data sits at 0.0; ~6 league matches with a
+    couple of goals each lifts them comfortably into the 7-8 range.
+    """
+    raw = (goals * 3 + assists * 2 + matches_played * 0.5) / 6
+    return round(min(10.0, max(0.0, raw)), 1)
 
 
 def user_public(u: dict) -> dict:
@@ -219,6 +225,10 @@ class CommentIn(BaseModel):
 class AvailabilityIn(BaseModel):
     date: str  # YYYY-MM-DD (local club timezone)
     vote: Literal["yes", "no", "reserve"]
+
+
+class MotmVoteIn(BaseModel):
+    candidate_id: str  # user_id of the player being voted for
 
 
 # ---------- Startup ----------
@@ -533,6 +543,8 @@ def _match_public(m: dict, users_by_id: dict) -> dict:
         "votes": vote_list,
         "lineup": m.get("lineup"),
         "result": m.get("result"),
+        "auto_from_availability_date": m.get("auto_from_availability_date"),
+        "motm": _motm_summary(m),
     }
 
 
@@ -1053,6 +1065,97 @@ async def delete_comment(mid: str, cid: str, user=Depends(get_current_user)):
     if c["user_id"] != user["id"] and user.get("role") != "admin" and not user.get("can_edit_matches", False):
         raise HTTPException(403, "Not allowed to delete this comment")
     await db.match_comments.delete_one({"id": cid})
+    return {"ok": True}
+
+
+# ---------- Man of the Match voting ----------
+def _motm_summary(m: dict) -> dict:
+    """Tally MOTM votes stored in match.motm_votes: { voter_id -> candidate_id }."""
+    votes: dict = m.get("motm_votes") or {}
+    counts: dict = {}
+    for cand in votes.values():
+        counts[cand] = counts.get(cand, 0) + 1
+    winner_id = None
+    if counts:
+        winner_id = max(counts.items(), key=lambda kv: kv[1])[0]
+    return {
+        "votes": dict(counts),  # { user_id: count }
+        "winner_id": winner_id,
+        "total": len(votes),
+    }
+
+
+def _candidates_for_match(m: dict) -> List[str]:
+    """Players who actually played (team_a/b/c) — only registered users
+    (guests excluded since they have no persistent identity)."""
+    out: List[str] = []
+    lineup = m.get("lineup") or {}
+    for k in ("team_a", "team_b", "team_c"):
+        for p in lineup.get(k) or []:
+            uid = (p or {}).get("user_id") or ""
+            if uid and not uid.startswith("guest:"):
+                out.append(uid)
+    return out
+
+
+@api.get("/matches/{mid}/motm")
+async def get_motm(mid: str, user=Depends(get_current_user)):
+    m = await db.matches.find_one({"id": mid}, {"_id": 0})
+    if not m:
+        raise HTTPException(404, "Match not found")
+    summary = _motm_summary(m)
+    candidates = _candidates_for_match(m)
+    my_choice = (m.get("motm_votes") or {}).get(user["id"])
+    open_for_voting = m.get("status") == "completed" and len(candidates) > 0
+    # Voter eligibility: any registered user who voted YES on the match
+    eligible_voters = [
+        uid for uid, v in (m.get("votes") or {}).items() if v == "yes"
+    ]
+    can_vote = open_for_voting and (user["id"] in eligible_voters or user.get("role") == "admin")
+    return {
+        "open": open_for_voting,
+        "can_vote": can_vote,
+        "candidates": candidates,
+        "my_choice": my_choice,
+        **summary,
+    }
+
+
+@api.post("/matches/{mid}/motm/vote")
+async def cast_motm_vote(mid: str, data: MotmVoteIn, user=Depends(get_current_user)):
+    m = await db.matches.find_one({"id": mid}, {"_id": 0})
+    if not m:
+        raise HTTPException(404, "Match not found")
+    if m.get("status") != "completed":
+        raise HTTPException(400, "MOTM voting opens once the match is completed")
+    candidates = set(_candidates_for_match(m))
+    if data.candidate_id not in candidates:
+        raise HTTPException(400, "Candidate did not play in this match")
+    if data.candidate_id == user["id"]:
+        raise HTTPException(400, "You cannot vote for yourself")
+    eligible = {uid for uid, v in (m.get("votes") or {}).items() if v == "yes"}
+    if user["id"] not in eligible and user.get("role") != "admin":
+        raise HTTPException(403, "Only players who voted YES can vote for MOTM")
+    motm_votes = dict(m.get("motm_votes") or {})
+    motm_votes[user["id"]] = data.candidate_id
+    await db.matches.update_one({"id": mid}, {"$set": {"motm_votes": motm_votes}})
+    refreshed = await db.matches.find_one({"id": mid}, {"_id": 0})
+    summary = _motm_summary(refreshed)
+    return {
+        "ok": True,
+        "my_choice": data.candidate_id,
+        **summary,
+    }
+
+
+@api.delete("/matches/{mid}/motm/vote")
+async def clear_motm_vote(mid: str, user=Depends(get_current_user)):
+    m = await db.matches.find_one({"id": mid}, {"_id": 0})
+    if not m:
+        raise HTTPException(404, "Match not found")
+    motm_votes = dict(m.get("motm_votes") or {})
+    motm_votes.pop(user["id"], None)
+    await db.matches.update_one({"id": mid}, {"$set": {"motm_votes": motm_votes}})
     return {"ok": True}
 
 
