@@ -431,8 +431,14 @@ export default function MatchDetail() {
     if (!match || busy) return;
     setBusy(true);
     try {
-      const updated = await api<Match>(`/matches/${match.id}/vote`, { method: 'POST', body: { vote: v } });
-      setMatch(updated);
+      // Toggle: if user re-taps their current vote, clear it instead.
+      if (myVote === v) {
+        const updated = await api<Match>(`/matches/${match.id}/vote`, { method: 'DELETE' });
+        setMatch(updated);
+      } else {
+        const updated = await api<Match>(`/matches/${match.id}/vote`, { method: 'POST', body: { vote: v } });
+        setMatch(updated);
+      }
     } catch (e: any) { Alert.alert('Error', e.message || 'Vote failed'); }
     finally { setBusy(false); }
   };

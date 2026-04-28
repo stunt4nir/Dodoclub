@@ -608,6 +608,20 @@ async def vote_match(mid: str, data: VoteIn, user=Depends(get_current_user)):
     return _match_public(m, umap)
 
 
+@api.delete("/matches/{mid}/vote")
+async def clear_match_vote(mid: str, user=Depends(get_current_user)):
+    """Toggle off — clear the caller's vote for this match."""
+    m = await db.matches.find_one({"id": mid}, {"_id": 0})
+    if not m:
+        raise HTTPException(404, "Match not found")
+    await db.matches.update_one(
+        {"id": mid}, {"$unset": {f"votes.{user['id']}": ""}}
+    )
+    m = await db.matches.find_one({"id": mid}, {"_id": 0})
+    umap = await _users_map()
+    return _match_public(m, umap)
+
+
 def _build_lineup(
     vote_list: list,
     team_size: int,
@@ -1301,6 +1315,15 @@ async def set_availability(data: AvailabilityIn, user=Depends(get_current_user))
         "vote": data.vote,
         "auto_match_id": auto_match["id"] if auto_match else None,
     }
+
+
+@api.delete("/availability")
+async def clear_availability(date: str, user=Depends(get_current_user)):
+    """Clear the caller's availability vote for a given date (toggle off)."""
+    if not DAY_RE.match(date):
+        raise HTTPException(400, "date must be YYYY-MM-DD")
+    await db.availability.delete_one({"user_id": user["id"], "date": date})
+    return {"ok": True, "date": date}
 
 
 @api.post("/admin/reset")

@@ -400,6 +400,13 @@ export default function MatchesScreen() {
     async (date: string, vote: 'yes' | 'no' | 'reserve') => {
       setAvailBusy(date);
       try {
+        // Toggle: if user re-taps the same vote, clear it instead.
+        const day = avail?.days.find((d) => d.date === date);
+        if (day && day.my_vote === vote) {
+          await api(`/availability?date=${encodeURIComponent(date)}`, { method: 'DELETE' });
+          await load();
+          return;
+        }
         const res = await api<{ auto_match_id: string | null }>(
           '/availability',
           { method: 'POST', body: { date, vote } }
@@ -421,7 +428,7 @@ export default function MatchesScreen() {
         setAvailBusy(null);
       }
     },
-    [load, router]
+    [avail, load, router]
   );
 
   useFocusEffect(
