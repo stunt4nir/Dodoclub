@@ -79,57 +79,65 @@ function formatDate(d: string) {
 }
 
 function formationCoords(n: number): { x: number; y: number }[] {
-  // Reasonable defaults for each team size. Last entry of each is the GK,
-  // followed by defenders, mids, forwards working up the pitch.
-  // y=0 is goal line, y=1 is centre line (we render team_a from bottom up).
-  if (n === 3) return [{ x: 0.5, y: 0.94 }, { x: 0.3, y: 0.65 }, { x: 0.7, y: 0.65 }];
+  // y must stay in [0.55, 0.96] so team A stays in the BOTTOM half, and
+  // team B (flipped to 1-y) stays in the TOP half. That guarantees no
+  // cross-half overlap and a clean gap around the midline.
+  // 0.96 = goal line (GK)
+  // 0.78 = defenders
+  // 0.65 = midfield
+  // 0.56 = front-line (just below midline)
+  if (n === 3) return [
+    { x: 0.5, y: 0.96 },
+    { x: 0.3, y: 0.7 }, { x: 0.7, y: 0.7 },
+  ];
   if (n === 4) return [
-    { x: 0.5, y: 0.95 },
-    { x: 0.25, y: 0.75 }, { x: 0.75, y: 0.75 },
-    { x: 0.5, y: 0.5 },
+    { x: 0.5, y: 0.96 },
+    { x: 0.28, y: 0.78 }, { x: 0.72, y: 0.78 },
+    { x: 0.5, y: 0.6 },
   ];
   if (n === 5) return [
-    { x: 0.5, y: 0.94 },
-    { x: 0.22, y: 0.75 }, { x: 0.78, y: 0.75 },
-    { x: 0.33, y: 0.55 }, { x: 0.67, y: 0.55 },
+    { x: 0.5, y: 0.96 },
+    { x: 0.25, y: 0.8 }, { x: 0.75, y: 0.8 },
+    { x: 0.32, y: 0.62 }, { x: 0.68, y: 0.62 },
   ];
   if (n === 6) return [
-    { x: 0.5, y: 0.94 },
-    { x: 0.25, y: 0.8 }, { x: 0.75, y: 0.8 },
-    { x: 0.25, y: 0.6 }, { x: 0.75, y: 0.6 },
-    { x: 0.5, y: 0.5 },
+    { x: 0.5, y: 0.96 },
+    { x: 0.25, y: 0.82 }, { x: 0.75, y: 0.82 },
+    { x: 0.25, y: 0.66 }, { x: 0.75, y: 0.66 },
+    { x: 0.5, y: 0.58 },
   ];
   if (n === 7) return [
-    { x: 0.5, y: 0.94 },
-    { x: 0.2, y: 0.78 }, { x: 0.5, y: 0.78 }, { x: 0.8, y: 0.78 },
-    { x: 0.25, y: 0.58 }, { x: 0.75, y: 0.58 },
-    { x: 0.5, y: 0.45 },
+    { x: 0.5, y: 0.96 },
+    { x: 0.2, y: 0.82 }, { x: 0.5, y: 0.82 }, { x: 0.8, y: 0.82 },
+    { x: 0.28, y: 0.68 }, { x: 0.72, y: 0.68 },
+    { x: 0.5, y: 0.58 },
   ];
   if (n === 8) return [
     // 1-3-3-1
-    { x: 0.5, y: 0.95 },
-    { x: 0.2, y: 0.78 }, { x: 0.5, y: 0.78 }, { x: 0.8, y: 0.78 },
-    { x: 0.25, y: 0.58 }, { x: 0.5, y: 0.6 }, { x: 0.75, y: 0.58 },
-    { x: 0.5, y: 0.42 },
+    { x: 0.5, y: 0.96 },
+    { x: 0.2, y: 0.83 }, { x: 0.5, y: 0.83 }, { x: 0.8, y: 0.83 },
+    { x: 0.22, y: 0.7 }, { x: 0.5, y: 0.7 }, { x: 0.78, y: 0.7 },
+    { x: 0.5, y: 0.58 },
   ];
   if (n === 9) return [
     // 1-3-3-2
-    { x: 0.5, y: 0.95 },
-    { x: 0.2, y: 0.8 }, { x: 0.5, y: 0.8 }, { x: 0.8, y: 0.8 },
-    { x: 0.2, y: 0.6 }, { x: 0.5, y: 0.6 }, { x: 0.8, y: 0.6 },
-    { x: 0.35, y: 0.42 }, { x: 0.65, y: 0.42 },
+    { x: 0.5, y: 0.96 },
+    { x: 0.2, y: 0.85 }, { x: 0.5, y: 0.85 }, { x: 0.8, y: 0.85 },
+    { x: 0.2, y: 0.72 }, { x: 0.5, y: 0.72 }, { x: 0.8, y: 0.72 },
+    { x: 0.35, y: 0.58 }, { x: 0.65, y: 0.58 },
   ];
   // n === 11 default 1-4-4-2
   return [
-    { x: 0.5, y: 0.95 },
-    { x: 0.15, y: 0.82 }, { x: 0.38, y: 0.82 }, { x: 0.62, y: 0.82 }, { x: 0.85, y: 0.82 },
-    { x: 0.18, y: 0.65 }, { x: 0.4, y: 0.65 }, { x: 0.6, y: 0.65 }, { x: 0.82, y: 0.65 },
-    { x: 0.4, y: 0.5 }, { x: 0.6, y: 0.5 },
+    { x: 0.5, y: 0.96 },
+    { x: 0.14, y: 0.85 }, { x: 0.38, y: 0.85 }, { x: 0.62, y: 0.85 }, { x: 0.86, y: 0.85 },
+    { x: 0.18, y: 0.72 }, { x: 0.4, y: 0.72 }, { x: 0.6, y: 0.72 }, { x: 0.82, y: 0.72 },
+    { x: 0.4, y: 0.58 }, { x: 0.6, y: 0.58 },
   ];
 }
 
-function PlayerMarker({ player, x, y, flip, color, textColor }: {
+function PlayerMarker({ player, x, y, flip, color, textColor, onPress, selected }: {
   player?: Vote; x: number; y: number; flip?: boolean; color: string; textColor: string;
+  onPress?: () => void; selected?: boolean;
 }) {
   const ay = flip ? 1 - y : y;
   if (!player) {
@@ -137,15 +145,34 @@ function PlayerMarker({ player, x, y, flip, color, textColor }: {
       <Text style={styles.markerEmptyText}>?</Text>
     </View>;
   }
+  const Wrapper: any = onPress ? TouchableOpacity : View;
   return (
-    <View style={[styles.markerWrap, { left: `${x * 100}%`, top: `${ay * 100}%` }]}>
-      <View style={[styles.marker, { backgroundColor: color, borderColor: color }]}>
+    <Wrapper
+      onPress={onPress}
+      activeOpacity={0.75}
+      hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+      style={[styles.markerWrap, { left: `${x * 100}%`, top: `${ay * 100}%` }]}
+    >
+      <View
+        style={[
+          styles.marker,
+          { backgroundColor: color, borderColor: selected ? '#fff' : color },
+          selected && {
+            borderWidth: 3,
+            shadowColor: '#fff',
+            shadowOpacity: 0.9,
+            shadowRadius: 12,
+            shadowOffset: { width: 0, height: 0 },
+            elevation: 8,
+          },
+        ]}
+      >
         <Text style={[styles.markerNumber, { color: textColor }]}>
           {player.shirt_number ?? player.name.slice(0, 1).toUpperCase()}
         </Text>
       </View>
       <Text style={styles.markerName} numberOfLines={1}>{player.name.split(' ')[0]}</Text>
-    </View>
+    </Wrapper>
   );
 }
 
@@ -208,6 +235,10 @@ export default function MatchDetail() {
   const [comments, setComments] = useState<Comment[]>([]);
   const [commentDraft, setCommentDraft] = useState('');
   const [postingComment, setPostingComment] = useState(false);
+
+  // Pitch swap mode (tap-to-swap two players on the formation)
+  const [pitchSel, setPitchSel] = useState<{ team: 'a' | 'b'; index: number } | null>(null);
+  const [swapBusy, setSwapBusy] = useState(false);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -287,6 +318,69 @@ export default function MatchDetail() {
   }, [match?.timer_started_at, match?.timer_ended_at]);
 
   const canEdit = !!(user && (user.role === 'admin' || user.can_edit_matches));
+
+  const onPitchTap = useCallback(
+    async (team: 'a' | 'b', index: number) => {
+      if (!canEdit || !match || !match.lineup) return;
+      const teamA = match.lineup.team_a || [];
+      const teamB = match.lineup.team_b || [];
+      const arrFor = (t: 'a' | 'b') => (t === 'a' ? teamA : teamB);
+      if (!pitchSel) {
+        if (!arrFor(team)[index]) return;
+        setPitchSel({ team, index });
+        return;
+      }
+      if (pitchSel.team === team && pitchSel.index === index) {
+        setPitchSel(null);
+        return;
+      }
+      const newA = [...teamA];
+      const newB = [...teamB];
+      const arrSel = pitchSel.team === 'a' ? newA : newB;
+      const arrTarget = team === 'a' ? newA : newB;
+      const tmp = arrSel[pitchSel.index];
+      arrSel[pitchSel.index] = arrTarget[index];
+      arrTarget[index] = tmp;
+
+      const reserves = match.lineup.reserves || [];
+      const teamC = match.lineup.team_c || [];
+      const buildPayload = (arr: any[]) =>
+        arr.filter(Boolean).map((p: any) => {
+          if (p.is_guest || (p.user_id || '').startsWith('guest:')) {
+            return {
+              name: p.name,
+              shirt_number: p.shirt_number ?? null,
+              preferred_position: p.preferred_position ?? null,
+            };
+          }
+          return p.user_id;
+        });
+      const payload = {
+        team_a: buildPayload(newA),
+        team_b: buildPayload(newB),
+        team_c: buildPayload(teamC),
+        reserves: buildPayload(reserves),
+      };
+
+      // Optimistic re-render
+      setMatch({
+        ...match,
+        lineup: { ...match.lineup, team_a: newA, team_b: newB },
+      });
+      setPitchSel(null);
+      setSwapBusy(true);
+      try {
+        const updated = await api<Match>(`/matches/${match.id}/lineup`, { method: 'PUT', body: payload });
+        setMatch(updated);
+      } catch (e: any) {
+        Alert.alert('Swap failed', e.message || 'Could not save the new lineup');
+        load();
+      } finally {
+        setSwapBusy(false);
+      }
+    },
+    [canEdit, match, pitchSel, load]
+  );
 
   const vote = async (v: 'yes' | 'no' | 'reserve') => {
     if (!match || busy) return;
@@ -617,12 +711,52 @@ export default function MatchDetail() {
           <View style={[styles.box, styles.boxTop]} />
           <View style={[styles.box, styles.boxBottom]} />
           {coords.map((c, i) => (
-            <PlayerMarker key={`b-${i}`} player={teamB[i]} x={c.x} y={c.y} flip color={TEAM_COLORS.b.primary} textColor={TEAM_COLORS.b.text} />
+            <PlayerMarker
+              key={`b-${i}`}
+              player={teamB[i]}
+              x={c.x}
+              y={c.y}
+              flip
+              color={TEAM_COLORS.b.primary}
+              textColor={TEAM_COLORS.b.text}
+              onPress={canEdit ? () => onPitchTap('b', i) : undefined}
+              selected={pitchSel?.team === 'b' && pitchSel.index === i}
+            />
           ))}
           {coords.map((c, i) => (
-            <PlayerMarker key={`a-${i}`} player={teamA[i]} x={c.x} y={c.y} color={TEAM_COLORS.a.primary} textColor={TEAM_COLORS.a.text} />
+            <PlayerMarker
+              key={`a-${i}`}
+              player={teamA[i]}
+              x={c.x}
+              y={c.y}
+              color={TEAM_COLORS.a.primary}
+              textColor={TEAM_COLORS.a.text}
+              onPress={canEdit ? () => onPitchTap('a', i) : undefined}
+              selected={pitchSel?.team === 'a' && pitchSel.index === i}
+            />
           ))}
         </View>
+        {canEdit && match.lineup && (
+          <View style={styles.swapHint}>
+            {swapBusy ? (
+              <ActivityIndicator size="small" color={colors.primary} />
+            ) : (
+              <Ionicons name={pitchSel ? 'swap-horizontal' : 'finger-print-outline'} size={14} color={colors.textMuted} />
+            )}
+            <Text style={styles.swapHintText}>
+              {swapBusy
+                ? 'Saving lineup…'
+                : pitchSel
+                ? `Swap selected — tap another player (any team) to swap, or tap again to cancel`
+                : 'Tap two players to swap their pitch positions'}
+            </Text>
+            {pitchSel && !swapBusy && (
+              <TouchableOpacity onPress={() => setPitchSel(null)} hitSlop={8}>
+                <Ionicons name="close" size={16} color={colors.textMuted} />
+              </TouchableOpacity>
+            )}
+          </View>
+        )}
 
         <View style={styles.lineupMeta}>
           <Text style={styles.teamLabel}><Text style={{ color: TEAM_COLORS.a.primary }}>■ </Text>TEAM RED ({teamA.length})</Text>
@@ -1137,6 +1271,24 @@ const styles = StyleSheet.create({
   editLineupBtn: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 6, borderRadius: radii.sm, borderWidth: 1, borderColor: colors.primary, backgroundColor: colors.surface },
   editLineupText: { color: colors.primary, fontWeight: '900', fontSize: 11, letterSpacing: 1 },
   pitch: { width: '100%', aspectRatio: 0.66, backgroundColor: '#14532d', borderRadius: radii.lg, borderWidth: 2, borderColor: '#166534', overflow: 'hidden', position: 'relative' },
+  swapHint: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: colors.surface,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  swapHintText: {
+    flex: 1,
+    color: colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '600',
+  },
   midLine: { position: 'absolute', top: '50%', left: 0, right: 0, height: 2, backgroundColor: 'rgba(255,255,255,0.35)' },
   midCircle: { position: 'absolute', top: '50%', left: '50%', width: 90, height: 90, marginLeft: -45, marginTop: -45, borderRadius: 45, borderWidth: 2, borderColor: 'rgba(255,255,255,0.35)' },
   box: { position: 'absolute', width: '60%', left: '20%', height: '14%', borderWidth: 2, borderColor: 'rgba(255,255,255,0.35)' },
