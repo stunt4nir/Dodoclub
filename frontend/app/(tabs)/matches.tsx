@@ -551,7 +551,8 @@ export default function MatchesScreen() {
         initialNumToRender={8}
         maxToRenderPerBatch={6}
         windowSize={7}
-        removeClippedSubviews
+        // removeClippedSubviews intentionally OFF — buggy on react-native-web
+        // (sets display:none on items that never come back).
         ListHeaderComponent={
           <AvailabilityPanel
             data={avail}

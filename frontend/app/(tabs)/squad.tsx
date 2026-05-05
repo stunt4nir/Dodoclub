@@ -143,7 +143,9 @@ export default function SquadScreen() {
         initialNumToRender={12}
         maxToRenderPerBatch={10}
         windowSize={7}
-        removeClippedSubviews
+        // Note: removeClippedSubviews intentionally OFF — on react-native-web
+        // it sets display:none on offscreen items and they never come back,
+        // which makes the squad list appear empty in the browser.
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
