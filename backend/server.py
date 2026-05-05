@@ -203,6 +203,13 @@ class ClubConfigUpdate(BaseModel):
     club_logo: Optional[str] = None  # base64
 
 
+class LiveScoreIn(BaseModel):
+    """Used for in-flight, mid-match score updates that do NOT finalise the match."""
+    team_a_score: int = Field(ge=0, le=99)
+    team_b_score: int = Field(ge=0, le=99)
+    team_c_score: Optional[int] = Field(default=None, ge=0, le=99)
+
+
 class ForgotPasswordIn(BaseModel):
     email: EmailStr
 
@@ -1011,6 +1018,36 @@ async def record_result(mid: str, data: MatchResultIn, user=Depends(require_edit
     return _match_public(m, umap)
 
 
+@api.post("/matches/{mid}/live-score")
+async def update_live_score(mid: str, data: LiveScoreIn, user=Depends(require_editor)):
+    """In-flight score update during a match — persists score_a/b/c only.
+    Does NOT touch player stats, league points, or final result. Used so that
+    tournament standings reflect the running scores in real time."""
+    m = await db.matches.find_one({"id": mid}, {"_id": 0})
+    if not m:
+        raise HTTPException(404, "Match not found")
+    if m.get("status") == "played":
+        raise HTTPException(400, "Match already finalised — edit the result instead")
+    update = {
+        "score_a": int(data.team_a_score),
+        "score_b": int(data.team_b_score),
+    }
+    if data.team_c_score is not None:
+        update["score_c"] = int(data.team_c_score)
+    # Bump status to 'in_progress' if any goal recorded; otherwise leave alone.
+    any_goal = (
+        int(data.team_a_score) > 0
+        or int(data.team_b_score) > 0
+        or int(data.team_c_score or 0) > 0
+    )
+    if any_goal and m.get("status") != "in_progress":
+        update["status"] = "in_progress"
+    await db.matches.update_one({"id": mid}, {"$set": update})
+    m = await db.matches.find_one({"id": mid}, {"_id": 0})
+    umap = await _users_map()
+    return _match_public(m, umap)
+
+
 @api.delete("/matches/{mid}")
 async def delete_match(mid: str, user=Depends(require_editor)):
     m = await db.matches.find_one({"id": mid}, {"_id": 0})
@@ -1209,7 +1246,9 @@ def _round_robin_pairings(team_names: List[str]) -> List[tuple]:
 
 
 def _tournament_public(t: dict, matches: List[dict]) -> dict:
-    """Compute standings on the fly from completed match results."""
+    """Compute standings on the fly. Final results take precedence; if a match
+    has no result yet but has a non-zero live score (score_a/b), use those
+    running scores so the standings table reflects in-flight matches."""
     team_names: List[str] = t.get("team_names") or []
     standings = {
         n: {"team": n, "P": 0, "W": 0, "D": 0, "L": 0, "GF": 0, "GA": 0, "GD": 0, "Pts": 0}
@@ -1222,11 +1261,25 @@ def _tournament_public(t: dict, matches: List[dict]) -> dict:
         result = (m or {}).get("result")
         home = fx.get("home")
         away = fx.get("away")
+
         played = bool(result)
+        live = False
         s_home = s_away = None
+
         if result and home in standings and away in standings:
+            # Final result — authoritative
             s_home = int(result.get("team_a_score") or 0)
             s_away = int(result.get("team_b_score") or 0)
+        elif m and home in standings and away in standings:
+            # No final result — use running live scores if any
+            la = int(m.get("score_a") or 0)
+            lb = int(m.get("score_b") or 0)
+            if la > 0 or lb > 0 or m.get("status") == "in_progress":
+                live = True
+                s_home = la
+                s_away = lb
+
+        if s_home is not None and s_away is not None and home in standings and away in standings:
             standings[home]["P"] += 1
             standings[away]["P"] += 1
             standings[home]["GF"] += s_home
@@ -1264,6 +1317,7 @@ def _tournament_public(t: dict, matches: List[dict]) -> dict:
             "round": fx.get("round"),
             "scheduled_at": (m or {}).get("date") if m else None,
             "played": played,
+            "live": live,
             "score_home": s_home,
             "score_away": s_away,
             "scorers": scorers,

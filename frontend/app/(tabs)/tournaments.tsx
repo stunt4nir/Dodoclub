@@ -35,6 +35,7 @@ type Fixture = {
   round: number;
   scheduled_at: string | null;
   played: boolean;
+  live: boolean;
   score_home: number | null;
   score_away: number | null;
   scorers: { user_id: string; goals: number }[];
@@ -113,6 +114,18 @@ export default function TournamentsScreen() {
       load();
     }, [load]),
   );
+
+  // Auto-refresh every 10s if any tournament has a live fixture, so standings
+  // reflect the running scores without manual pull-to-refresh.
+  React.useEffect(() => {
+    if (!items) return;
+    const hasLive = items.some((t) => t.fixtures.some((f) => f.live));
+    if (!hasLive) return;
+    const id = setInterval(() => {
+      load();
+    }, 10000);
+    return () => clearInterval(id);
+  }, [items, load]);
 
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -220,6 +233,7 @@ function TournamentCard({
   onDelete?: () => void;
 }) {
   const playedCount = t.fixtures.filter((f) => f.played).length;
+  const liveCount = t.fixtures.filter((f) => f.live).length;
   return (
     <View style={styles.cardWrap}>
       <TouchableOpacity activeOpacity={0.85} onPress={onToggle} style={styles.card}>
@@ -233,6 +247,12 @@ function TournamentCard({
               {t.team_names.length} teams · {t.team_size}v{t.team_size} · {playedCount}/{t.fixtures.length} played
             </Muted>
           </View>
+          {liveCount > 0 && (
+            <View style={[styles.tag, { borderColor: colors.danger, backgroundColor: '#7f1d1d' }]}>
+              <View style={styles.liveBadgeDot} />
+              <Text style={[styles.tagText, { color: '#fff' }]}> {liveCount} LIVE</Text>
+            </View>
+          )}
           {t.completed && t.winner && (
             <View style={[styles.tag, { borderColor: colors.success }]}>
               <Text style={[styles.tagText, { color: colors.success }]}>{t.winner.toUpperCase()} WINS</Text>
@@ -289,26 +309,45 @@ function TournamentCard({
               key={f.match_id}
               testID={`fixture-${f.match_id}`}
               onPress={() => onOpenMatch(f.match_id)}
-              style={[styles.fixture, f.played && styles.fixturePlayed]}
+              style={[
+                styles.fixture,
+                f.played && styles.fixturePlayed,
+                f.live && styles.fixtureLive,
+              ]}
               activeOpacity={0.7}
             >
               <View style={styles.fixtureRoundCol}>
                 <Text style={styles.fixtureRound}>R{f.round}</Text>
-                <Muted style={{ fontSize: 10 }}>{formatDate(f.scheduled_at)}</Muted>
+                {f.live ? (
+                  <View style={styles.liveBadge} testID={`fixture-${f.match_id}-live-badge`}>
+                    <View style={styles.liveBadgeDot} />
+                    <Text style={styles.liveBadgeText}>LIVE</Text>
+                  </View>
+                ) : (
+                  <Muted style={{ fontSize: 10 }}>{formatDate(f.scheduled_at)}</Muted>
+                )}
               </View>
               <View style={styles.fixtureTeams}>
                 <View style={styles.fixtureTeamRow}>
                   <View style={[styles.teamDot, { backgroundColor: colorFor(f.home) }]} />
                   <Text style={styles.fixtureTeam} numberOfLines={1}>{f.home}</Text>
-                  <Text style={[styles.fixtureScore, !f.played && { color: colors.textMuted }]}>
-                    {f.played ? f.score_home : '-'}
+                  <Text style={[
+                    styles.fixtureScore,
+                    !f.played && !f.live && { color: colors.textMuted },
+                    f.live && { color: colors.danger },
+                  ]}>
+                    {(f.played || f.live) && f.score_home != null ? f.score_home : '-'}
                   </Text>
                 </View>
                 <View style={styles.fixtureTeamRow}>
                   <View style={[styles.teamDot, { backgroundColor: colorFor(f.away) }]} />
                   <Text style={styles.fixtureTeam} numberOfLines={1}>{f.away}</Text>
-                  <Text style={[styles.fixtureScore, !f.played && { color: colors.textMuted }]}>
-                    {f.played ? f.score_away : '-'}
+                  <Text style={[
+                    styles.fixtureScore,
+                    !f.played && !f.live && { color: colors.textMuted },
+                    f.live && { color: colors.danger },
+                  ]}>
+                    {(f.played || f.live) && f.score_away != null ? f.score_away : '-'}
                   </Text>
                 </View>
               </View>
@@ -803,6 +842,32 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   fixturePlayed: { borderColor: colors.borderLight },
+  fixtureLive: {
+    borderColor: colors.danger,
+    backgroundColor: '#3b1818',
+  },
+  liveBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 3,
+    backgroundColor: colors.danger,
+    marginTop: 2,
+  },
+  liveBadgeDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+    backgroundColor: '#fff',
+  },
+  liveBadgeText: {
+    color: '#fff',
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 1,
+  },
   fixtureRoundCol: {
     width: 56,
     alignItems: 'center',

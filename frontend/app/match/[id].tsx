@@ -49,8 +49,14 @@ type Match = {
   duration_minutes: number;
   timer_started_at: string | null;
   timer_ended_at: string | null;
-  status: 'voting' | 'scheduled' | 'played' | 'completed';
+  status: 'voting' | 'scheduled' | 'in_progress' | 'played' | 'completed';
   created_by?: string;
+  score_a?: number;
+  score_b?: number;
+  score_c?: number;
+  tournament_id?: string | null;
+  tournament_home?: string | null;
+  tournament_away?: string | null;
   votes: Vote[];
   lineup?: {
     team_a: Vote[];
@@ -268,6 +274,32 @@ export default function MatchDetail() {
   const [motm, setMotm] = useState<MotmInfo | null>(null);
   const [motmBusy, setMotmBusy] = useState(false);
 
+  // Live in-match score panel
+  const [liveBusy, setLiveBusy] = useState(false);
+  const liveA = match?.score_a ?? 0;
+  const liveB = match?.score_b ?? 0;
+  const bumpLive = async (team: 'a' | 'b', delta: 1 | -1) => {
+    if (!match || liveBusy) return;
+    const nextA = Math.max(0, (match.score_a ?? 0) + (team === 'a' ? delta : 0));
+    const nextB = Math.max(0, (match.score_b ?? 0) + (team === 'b' ? delta : 0));
+    setLiveBusy(true);
+    // Optimistic update
+    setMatch({ ...match, score_a: nextA, score_b: nextB } as Match);
+    try {
+      const updated = await api<Match>(`/matches/${match.id}/live-score`, {
+        method: 'POST',
+        body: { team_a_score: nextA, team_b_score: nextB },
+      });
+      setMatch(updated);
+    } catch (e: any) {
+      // Revert
+      setMatch({ ...match });
+      Alert.alert('Error', e.message || 'Failed to update score');
+    } finally {
+      setLiveBusy(false);
+    }
+  };
+
   const load = useCallback(async () => {
     if (!id) return;
     try {
@@ -484,7 +516,11 @@ export default function MatchDetail() {
       for (const s of existing.stats) map[s.user_id] = { goals: s.goals, assists: s.assists };
       setPlayerStats(map);
     } else {
-      setScoreA(0); setScoreB(0); setScoreC(0); setPlayerStats({});
+      // Seed from live in-flight scores so the recorder doesn't lose progress
+      setScoreA(match.score_a ?? 0);
+      setScoreB(match.score_b ?? 0);
+      setScoreC(match.score_c ?? 0);
+      setPlayerStats({});
     }
     setResultOpen(true);
   };
@@ -723,6 +759,79 @@ export default function MatchDetail() {
                 )}
               </View>
             )}
+          </View>
+        )}
+
+        {/* LIVE SCORE — quick +/- score panel for editors before the match is finalised */}
+        {canEdit && match.status !== 'played' && match.lineup && (
+          <View style={styles.liveScoreCard} testID="live-score-panel">
+            <View style={styles.liveScoreHeader}>
+              <View style={[styles.livePill, match.status === 'in_progress' ? styles.livePillOn : styles.livePillIdle]}>
+                <View style={[styles.liveDot, match.status === 'in_progress' && styles.liveDotOn]} />
+                <Text style={styles.livePillText}>{match.status === 'in_progress' ? 'LIVE' : 'SCORE'}</Text>
+              </View>
+              {match.tournament_id && (
+                <Muted style={{ fontSize: 11 }}>Tournament fixture · standings update on every tap</Muted>
+              )}
+            </View>
+            <View style={styles.liveScoreRow}>
+              <View style={styles.liveTeam}>
+                <Text style={styles.liveTeamLabel} numberOfLines={1}>
+                  {match.tournament_home || 'TEAM RED'}
+                </Text>
+                <View style={styles.liveControls}>
+                  <TouchableOpacity
+                    testID="live-score-a-minus"
+                    onPress={() => bumpLive('a', -1)}
+                    disabled={liveBusy || liveA <= 0}
+                    style={[styles.liveBtn, (liveBusy || liveA <= 0) && { opacity: 0.4 }]}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons name="remove" size={20} color={colors.textPrimary} />
+                  </TouchableOpacity>
+                  <Text style={styles.liveScore} testID="live-score-a">{liveA}</Text>
+                  <TouchableOpacity
+                    testID="live-score-a-plus"
+                    onPress={() => bumpLive('a', 1)}
+                    disabled={liveBusy}
+                    style={[styles.liveBtn, styles.liveBtnPlus, liveBusy && { opacity: 0.4 }]}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons name="add" size={20} color="#fff" />
+                  </TouchableOpacity>
+                </View>
+              </View>
+              <Text style={styles.liveSep}>:</Text>
+              <View style={styles.liveTeam}>
+                <Text style={styles.liveTeamLabel} numberOfLines={1}>
+                  {match.tournament_away || 'TEAM BLACK'}
+                </Text>
+                <View style={styles.liveControls}>
+                  <TouchableOpacity
+                    testID="live-score-b-minus"
+                    onPress={() => bumpLive('b', -1)}
+                    disabled={liveBusy || liveB <= 0}
+                    style={[styles.liveBtn, (liveBusy || liveB <= 0) && { opacity: 0.4 }]}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons name="remove" size={20} color={colors.textPrimary} />
+                  </TouchableOpacity>
+                  <Text style={styles.liveScore} testID="live-score-b">{liveB}</Text>
+                  <TouchableOpacity
+                    testID="live-score-b-plus"
+                    onPress={() => bumpLive('b', 1)}
+                    disabled={liveBusy}
+                    style={[styles.liveBtn, styles.liveBtnPlus, liveBusy && { opacity: 0.4 }]}
+                    activeOpacity={0.7}
+                  >
+                    <Ionicons name="add" size={20} color="#fff" />
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </View>
+            <Muted style={{ fontSize: 11, marginTop: 6, textAlign: 'center' }}>
+              Tip: tap +/- to track goals live. When the match ends, open the result modal to assign scorers/assists.
+            </Muted>
           </View>
         )}
 
@@ -1723,5 +1832,93 @@ const styles = StyleSheet.create({
     backgroundColor: colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  // Live score panel
+  liveScoreCard: {
+    marginTop: spacing.md,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.md,
+    padding: spacing.md,
+  },
+  liveScoreHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  livePill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 4,
+    borderWidth: 1,
+  },
+  livePillIdle: { borderColor: colors.borderLight, backgroundColor: colors.background },
+  livePillOn: { borderColor: colors.danger, backgroundColor: '#7f1d1d' },
+  liveDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.textMuted,
+  },
+  liveDotOn: { backgroundColor: '#fff' },
+  livePillText: {
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 1.2,
+    color: colors.textPrimary,
+  },
+  liveScoreRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  liveTeam: {
+    flex: 1,
+    alignItems: 'center',
+    gap: 6,
+  },
+  liveTeamLabel: {
+    color: colors.textSecondary,
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 1.5,
+    textTransform: 'uppercase',
+  },
+  liveControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  liveBtn: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.background,
+  },
+  liveBtnPlus: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  liveScore: {
+    color: colors.textPrimary,
+    fontSize: 36,
+    fontWeight: '900',
+    minWidth: 44,
+    textAlign: 'center',
+  },
+  liveSep: {
+    color: colors.textMuted,
+    fontSize: 24,
+    fontWeight: '900',
+    paddingHorizontal: 4,
   },
 });

@@ -31,9 +31,12 @@ type Match = {
   team_size: number;
   match_type: 'friendly' | 'league';
   third_team_enabled: boolean;
-  status: 'voting' | 'scheduled' | 'played';
+  status: 'voting' | 'scheduled' | 'in_progress' | 'played';
   votes: any[];
   result?: any;
+  score_a?: number;
+  score_b?: number;
+  score_c?: number;
 };
 
 function formatDate(d: string) {
@@ -52,6 +55,7 @@ function StatusPill({ status }: { status: Match['status'] }) {
   const map = {
     voting: { label: 'VOTING', color: colors.warning },
     scheduled: { label: 'SCHEDULED', color: colors.primary },
+    in_progress: { label: 'LIVE', color: colors.danger },
     played: { label: 'PLAYED', color: colors.success },
   };
   const v = map[status];
@@ -612,10 +616,11 @@ export default function MatchesScreen() {
                     {item.votes.filter((v: any) => v.vote === 'no').length}✗
                   </Text>
                 </View>
-                {item.result && (
-                  <Text style={styles.scoreText}>
-                    {item.result.team_a_score} – {item.result.team_b_score}
-                    {item.result.team_c_score != null ? ` – ${item.result.team_c_score}` : ''}
+                {(item.result || item.status === 'in_progress') && (
+                  <Text style={[styles.scoreText, item.status === 'in_progress' && { color: colors.danger }]}>
+                    {item.result
+                      ? `${item.result.team_a_score} – ${item.result.team_b_score}${item.result.team_c_score != null ? ` – ${item.result.team_c_score}` : ''}`
+                      : `${item.score_a ?? 0} – ${item.score_b ?? 0}`}
                   </Text>
                 )}
               </View>

@@ -34,10 +34,13 @@ type Match = {
   date: string;
   location?: string | null;
   team_size: number;
-  status: 'voting' | 'scheduled' | 'played';
+  status: 'voting' | 'scheduled' | 'in_progress' | 'played';
   votes: Vote[];
   lineup?: any;
   result?: any;
+  score_a?: number;
+  score_b?: number;
+  score_c?: number;
 };
 
 function formatDate(d: string) {
@@ -88,6 +91,7 @@ export default function HomeScreen() {
   }, [load]);
 
   const upcoming =
+    matches.find((m) => m.status === 'in_progress') ||
     matches.find((m) => m.status === 'voting') ||
     matches.find((m) => m.status === 'scheduled');
 
