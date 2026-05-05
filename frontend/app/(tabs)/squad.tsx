@@ -14,6 +14,7 @@ import { useFocusEffect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { api } from '../../src/api';
 import { useAuth } from '../../src/auth';
+import { confirm } from '../../src/confirm';
 import { colors, spacing, radii } from '../../src/theme';
 import { Display, Overline, Muted } from '../../src/typography';
 import Avatar from '../../src/Avatar';
@@ -66,29 +67,21 @@ export default function SquadScreen() {
     }, [load])
   );
 
-  const confirmDeletePlayer = useCallback((p: Player) => {
-    Alert.alert(
+  const confirmDeletePlayer = useCallback(async (p: Player) => {
+    const ok = await confirm(
       'Delete player?',
       `This will permanently remove ${p.name} from the squad, wipe their votes, lineup slots, and chat messages. This cannot be undone.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            setDeletingId(p.id);
-            try {
-              await api(`/users/${p.id}`, { method: 'DELETE' });
-              setPlayers((prev) => prev.filter((x) => x.id !== p.id));
-            } catch (e: any) {
-              Alert.alert('Error', e.message || 'Delete failed');
-            } finally {
-              setDeletingId(null);
-            }
-          },
-        },
-      ],
     );
+    if (!ok) return;
+    setDeletingId(p.id);
+    try {
+      await api(`/users/${p.id}`, { method: 'DELETE' });
+      setPlayers((prev) => prev.filter((x) => x.id !== p.id));
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Delete failed');
+    } finally {
+      setDeletingId(null);
+    }
   }, []);
 
   if (loading) {

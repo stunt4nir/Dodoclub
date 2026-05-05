@@ -19,6 +19,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { api } from '../../src/api';
 import { useAuth } from '../../src/auth';
+import { confirm } from '../../src/confirm';
 import { scheduleMatchReminders } from '../../src/notifications';
 import { colors, spacing, radii } from '../../src/theme';
 import { Display, Overline, Muted, Title } from '../../src/typography';
@@ -503,26 +504,18 @@ export default function MatchesScreen() {
     }
   };
 
-  const deleteMatch = (mid: string, title: string) => {
-    Alert.alert(
+  const deleteMatch = async (mid: string, title: string) => {
+    const ok = await confirm(
       `Delete "${title}"?`,
       'This reverts any stats recorded from this match.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await api(`/matches/${mid}`, { method: 'DELETE' });
-              await load();
-            } catch (e: any) {
-              Alert.alert('Error', e.message || 'Failed');
-            }
-          },
-        },
-      ]
     );
+    if (!ok) return;
+    try {
+      await api(`/matches/${mid}`, { method: 'DELETE' });
+      await load();
+    } catch (e: any) {
+      Alert.alert('Error', e.message || 'Failed');
+    }
   };
 
   if (loading) {

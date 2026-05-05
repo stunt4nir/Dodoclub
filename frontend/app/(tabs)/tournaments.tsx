@@ -19,6 +19,7 @@ import { useFocusEffect, useRouter } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { api } from '../../src/api';
 import { useAuth } from '../../src/auth';
+import { confirm } from '../../src/confirm';
 import { colors, spacing, radii } from '../../src/theme';
 import { Display, Overline, Muted, Title } from '../../src/typography';
 import Avatar from '../../src/Avatar';
@@ -134,26 +135,18 @@ export default function TournamentsScreen() {
     setRefreshing(false);
   }, [load]);
 
-  const deleteTournament = (t: Tournament) => {
-    Alert.alert(
+  const deleteTournament = async (t: Tournament) => {
+    const ok = await confirm(
       'Delete tournament?',
       `"${t.name}" and all ${t.fixtures.length} fixtures will be removed.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await api(`/tournaments/${t.id}`, { method: 'DELETE' });
-              await load();
-            } catch (e: any) {
-              Alert.alert('Failed', e?.message || 'Delete failed');
-            }
-          },
-        },
-      ],
     );
+    if (!ok) return;
+    try {
+      await api(`/tournaments/${t.id}`, { method: 'DELETE' });
+      await load();
+    } catch (e: any) {
+      Alert.alert('Failed', e?.message || 'Delete failed');
+    }
   };
 
   const toggle = (id: string) => setExpanded((m) => ({ ...m, [id]: !m[id] }));
