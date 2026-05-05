@@ -145,12 +145,21 @@ function PlayerMarker({ player, x, y, flip, color, textColor, onPress, selected 
   onPress?: () => void; selected?: boolean;
 }) {
   const ay = flip ? 1 - y : y;
+  // Name normally renders below the marker. For markers near the goal lines
+  // (top or bottom edge of the pitch), flip the name above so it doesn't get
+  // clipped by the pitch boundary.
+  const nameAbove = ay > 0.88 || ay < 0.12;
   if (!player) {
     return <View style={[styles.markerEmpty, { left: `${x * 100}%`, top: `${ay * 100}%`, borderColor: color }]}>
       <Text style={styles.markerEmptyText}>?</Text>
     </View>;
   }
   const Wrapper: any = onPress ? TouchableOpacity : View;
+  const nameNode = (
+    <Text style={[styles.markerName, nameAbove ? { marginTop: 0, marginBottom: 2 } : null]} numberOfLines={1}>
+      {player.name.split(' ')[0]}
+    </Text>
+  );
   return (
     <Wrapper
       onPress={onPress}
@@ -158,6 +167,7 @@ function PlayerMarker({ player, x, y, flip, color, textColor, onPress, selected 
       hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
       style={[styles.markerWrap, { left: `${x * 100}%`, top: `${ay * 100}%` }]}
     >
+      {nameAbove && nameNode}
       <View
         style={[
           styles.marker,
@@ -176,7 +186,7 @@ function PlayerMarker({ player, x, y, flip, color, textColor, onPress, selected 
           {player.shirt_number ?? player.name.slice(0, 1).toUpperCase()}
         </Text>
       </View>
-      <Text style={styles.markerName} numberOfLines={1}>{player.name.split(' ')[0]}</Text>
+      {!nameAbove && nameNode}
     </Wrapper>
   );
 }
