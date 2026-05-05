@@ -15,8 +15,9 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect, useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
+import * as Linking from 'expo-linking';
 import { Ionicons } from '@expo/vector-icons';
-import { api } from '../../src/api';
+import { api, API } from '../../src/api';
 import { useAuth, User } from '../../src/auth';
 import { colors, spacing, radii } from '../../src/theme';
 import { Display, Overline, Muted, Title } from '../../src/typography';
@@ -283,6 +284,31 @@ export default function ProfileScreen() {
         },
       ]
     );
+  };
+
+  const downloadWebBundle = async () => {
+    const url = `${API}/download/web-bundle.zip`;
+    try {
+      if (Platform.OS === 'web') {
+        // Use a real <a download> click on web — the most reliable cross-browser
+        // way to trigger a file download even with Cloudflare/CSP/popups around.
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'club-dodo-web.zip';
+        a.target = '_blank';
+        a.rel = 'noopener';
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => a.remove(), 1000);
+      } else {
+        await Linking.openURL(url);
+      }
+    } catch (e: any) {
+      Alert.alert(
+        'Could not start download',
+        `Open this URL in your browser:\n\n${url}`,
+      );
+    }
   };
 
   if (!user) {
@@ -576,6 +602,24 @@ export default function ProfileScreen() {
                 </Text>
               </View>
               <Ionicons name="chevron-forward" size={18} color={colors.warning} />
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              testID="download-web-bundle-btn"
+              onPress={downloadWebBundle}
+              style={[styles.dangerBtn, { borderColor: colors.primary, marginBottom: spacing.sm }]}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="cloud-download-outline" size={18} color={colors.primary} />
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.dangerTitle, { color: colors.primary }]}>
+                  DOWNLOAD WEB BUNDLE (.ZIP)
+                </Text>
+                <Text style={styles.dangerSub}>
+                  Latest static export of the app for self-hosting (~2.7 MB).
+                </Text>
+              </View>
+              <Ionicons name="chevron-forward" size={18} color={colors.primary} />
             </TouchableOpacity>
 
             <TouchableOpacity
