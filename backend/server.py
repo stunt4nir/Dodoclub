@@ -10,7 +10,7 @@ import logging
 import bcrypt
 import jwt
 from datetime import datetime, timezone, timedelta
-from typing import List, Optional, Literal, Union
+from typing import List, Optional, Literal, Union, Dict
 import re
 
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request
@@ -237,6 +237,10 @@ class TournamentCreateIn(BaseModel):
     team_size: int = Field(default=5, ge=4, le=11)
     match_type: Literal["friendly", "league"] = "friendly"
     start_date: Optional[str] = None  # YYYY-MM-DD; first match scheduled here, others daily
+    # Optional: map of team_name -> list of user_ids assigned to that team.
+    # If provided, each fixture's lineup is pre-populated so players go straight
+    # into the pitch view without requiring re-voting.
+    team_rosters: Optional[Dict[str, List[str]]] = None
 
 
 # ---------- Startup ----------
@@ -1274,6 +1278,7 @@ def _tournament_public(t: dict, matches: List[dict]) -> dict:
         "team_names": team_names,
         "team_size": t.get("team_size"),
         "match_type": t.get("match_type"),
+        "team_rosters": t.get("team_rosters") or {},
         "created_at": t.get("created_at"),
         "fixtures": fixtures_out,
         "standings": table,
@@ -1291,6 +1296,41 @@ async def create_tournament(data: TournamentCreateIn, admin=Depends(require_admi
         raise HTTPException(400, "Team names must be unique")
     if len(names) < 2:
         raise HTTPException(400, "Need at least 2 teams")
+
+    # ---- Optional: validate team rosters ----
+    rosters: Dict[str, List[dict]] = {}
+    rosters_in: Dict[str, List[str]] = {}
+    if data.team_rosters:
+        # Make sure every key matches a declared team name
+        for tname in data.team_rosters.keys():
+            if tname not in names:
+                raise HTTPException(400, f"Roster references unknown team '{tname}'")
+        rosters_in = {n: list(data.team_rosters.get(n) or []) for n in names}
+        # Each player should only belong to one team
+        seen_uids: set = set()
+        for tname, uids in rosters_in.items():
+            if len(uids) > data.team_size:
+                raise HTTPException(
+                    400,
+                    f"Team '{tname}' has {len(uids)} players (max {data.team_size})",
+                )
+            for uid in uids:
+                if uid in seen_uids:
+                    raise HTTPException(400, "A player cannot belong to more than one team")
+                seen_uids.add(uid)
+        # Hydrate to mini player objects for lineup
+        umap = await _users_map()
+        for tname, uids in rosters_in.items():
+            mini_list = []
+            for uid in uids:
+                u = umap.get(uid)
+                if not u:
+                    continue
+                mp = _player_mini(u)
+                mp["vote"] = "yes"
+                mini_list.append(mp)
+            rosters[tname] = mini_list
+
     pairings = _round_robin_pairings(names)
     # Schedule one fixture per day starting from start_date (or tomorrow).
     if data.start_date and DAY_RE.match(data.start_date):
@@ -1306,6 +1346,23 @@ async def create_tournament(data: TournamentCreateIn, admin=Depends(require_admi
     for i, (home, away) in enumerate(pairings):
         match_id = str(uuid.uuid4())
         date_iso = (base + timedelta(days=i)).isoformat()
+        # Build pre-populated lineup if rosters were provided so the pitch is
+        # ready immediately (no need to vote first).
+        lineup_doc = None
+        votes_doc: Dict[str, str] = {}
+        if rosters:
+            home_roster = rosters.get(home, [])
+            away_roster = rosters.get(away, [])
+            lineup_doc = {
+                "team_a": home_roster,
+                "team_b": away_roster,
+                "team_c": [],
+                "reserves": [],
+                "team_size": data.team_size,
+                "third_team_enabled": False,
+            }
+            for p in home_roster + away_roster:
+                votes_doc[p["user_id"]] = "yes"
         await db.matches.insert_one({
             "id": match_id,
             "title": f"{data.name}: {home} vs {away}",
@@ -1313,8 +1370,8 @@ async def create_tournament(data: TournamentCreateIn, admin=Depends(require_admi
             "team_size": data.team_size,
             "match_type": data.match_type,
             "third_team_enabled": False,
-            "votes": {},
-            "lineup": None,
+            "votes": votes_doc,
+            "lineup": lineup_doc,
             "score_a": 0, "score_b": 0, "score_c": 0,
             "status": "scheduled",
             "result": None,
@@ -1336,6 +1393,7 @@ async def create_tournament(data: TournamentCreateIn, admin=Depends(require_admi
         "team_size": data.team_size,
         "match_type": data.match_type,
         "fixtures": fixtures,
+        "team_rosters": rosters_in,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "created_by": admin["id"],
     }
