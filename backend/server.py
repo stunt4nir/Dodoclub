@@ -2005,7 +2005,13 @@ app.include_router(api)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_credentials=True,
+    # We auth via Authorization: Bearer <token>, NOT cookies. The
+    # Authorization header is not classed as "credentials" by the browser, so
+    # we do NOT need allow_credentials=True. Keeping it false means we can
+    # safely return Access-Control-Allow-Origin: * (which the upstream
+    # Emergent/Cloudflare proxy already injects) — that combo is only invalid
+    # when credentials are also enabled.
+    allow_credentials=False,
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
