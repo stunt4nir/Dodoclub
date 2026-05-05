@@ -563,6 +563,12 @@ def _match_public(m: dict, users_by_id: dict) -> dict:
         "votes": vote_list,
         "lineup": m.get("lineup"),
         "result": m.get("result"),
+        "score_a": int(m.get("score_a") or 0),
+        "score_b": int(m.get("score_b") or 0),
+        "score_c": int(m.get("score_c") or 0),
+        "tournament_id": m.get("tournament_id"),
+        "tournament_home": m.get("tournament_home"),
+        "tournament_away": m.get("tournament_away"),
         "auto_from_availability_date": m.get("auto_from_availability_date"),
         "motm": _motm_summary(m),
     }
