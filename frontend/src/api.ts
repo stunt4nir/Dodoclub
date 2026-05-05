@@ -15,7 +15,7 @@ export async function clearToken() {
 }
 
 type Opts = {
-  method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   body?: any;
   auth?: boolean;
 };

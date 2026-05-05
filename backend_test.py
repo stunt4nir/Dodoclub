@@ -1,393 +1,515 @@
-"""
-Backend tests for the new live in-match scoring feature.
+"""Backend test suite for tournament expansion + manual scheduling features.
 
 Covers:
-  1. Endpoint basics (auth/role, score updates, pydantic bounds)
-  2. Cannot update a finalised match
-  3. Tournament standings reflect live scores (the main test)
-  4. Purity of live-score (no stat side-effects)
-  5. Cleanup
+  A) TournamentCreateIn: start_time, all_same_date, double_round_robin
+  B) POST /api/tournaments/{tid}/matches (admin-only)
+  C) PATCH /api/matches/{mid}/datetime (editor)
+  D) POST /api/matches/{mid}/finish (editor)
+  E) POST /api/matches/{mid}/lineup/positions (editor)
 """
-
 import os
 import sys
+import time
 import uuid
-from typing import Optional, Dict, Any, List
-
+import json
 import requests
 
-
-def _load_backend_url() -> str:
-    fe_env = "/app/frontend/.env"
-    url = None
-    try:
-        with open(fe_env, "r") as f:
-            for line in f:
-                line = line.strip()
-                if line.startswith("EXPO_PUBLIC_BACKEND_URL"):
-                    url = line.split("=", 1)[1].strip().strip('"').strip("'")
-                    break
-    except Exception as e:
-        print(f"Could not read {fe_env}: {e}")
-    if not url:
-        url = os.environ.get("REACT_APP_BACKEND_URL") or os.environ.get("EXPO_PUBLIC_BACKEND_URL")
-    if not url:
-        raise RuntimeError("No backend URL configured")
-    return url.rstrip("/")
-
-
-BASE = _load_backend_url() + "/api"
-print(f"[INFO] Base URL: {BASE}")
-
+BASE_URL = "https://dodo-roster-build.preview.emergentagent.com/api"
 ADMIN_EMAIL = "admin@clubdodo.com"
 ADMIN_PASSWORD = "dodo2026"
 
-PASS = 0
-FAIL = 0
-FAILURES: List[str] = []
+passes = []
+failures = []
 
 
-def check(cond: bool, label: str, details: Any = ""):
-    global PASS, FAIL
-    if cond:
-        PASS += 1
-        print(f"  PASS  {label}")
+def record(name, ok, detail=""):
+    if ok:
+        passes.append(name)
+        print(f"  PASS  {name}")
     else:
-        FAIL += 1
-        msg = f"FAIL  {label} :: {details}"
-        print(f"  {msg}")
-        FAILURES.append(msg)
+        failures.append(f"{name} :: {detail}")
+        print(f"  FAIL  {name} :: {detail}")
 
 
-def _hdrs(token: Optional[str] = None) -> Dict[str, str]:
-    h = {"Content-Type": "application/json"}
-    if token:
-        h["Authorization"] = f"Bearer {token}"
-    return h
+def h(token):
+    return {"Authorization": f"Bearer {token}"} if token else {}
 
 
-print("\n== 0. Auth setup ==")
-r = requests.post(f"{BASE}/auth/login", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD}, timeout=30)
-check(r.status_code == 200, "admin login 200", r.text[:200])
-admin_token = r.json()["token"]
-admin_user = r.json()["user"]
-print(f"  admin id: {admin_user['id']}")
-
-SUF = uuid.uuid4().hex[:6]
-test_users = []
-positions = ["CB", "LB", "CDM", "CAM", "LW", "ST"]
-for i in range(1, 7):
-    email = f"livetest_{SUF}_{i}@example.com"
-    pwd = "test1234!"
-    rr = requests.post(
-        f"{BASE}/auth/register",
-        json={
-            "email": email,
-            "password": pwd,
-            "name": f"LiveTester {SUF}-{i}",
-            "shirt_number": 10 + i,
-            "preferred_positions": [positions[i - 1]],
-        },
-        timeout=30,
-    )
-    check(rr.status_code == 200, f"register user {i}", rr.text[:200])
-    test_users.append({
-        "id": rr.json()["user"]["id"],
-        "email": email,
-        "password": pwd,
-        "token": rr.json()["token"],
-    })
-
-regular_token = test_users[0]["token"]
+def login(email, password):
+    r = requests.post(f"{BASE_URL}/auth/login", json={"email": email, "password": password}, timeout=30)
+    r.raise_for_status()
+    return r.json()["token"], r.json()["user"]
 
 
-def create_tournament_with_rosters() -> Dict[str, Any]:
-    body = {
-        "name": f"Live Cup {SUF}",
-        "team_names": ["Red", "Black", "White"],
-        "team_size": 5,
-        "match_type": "friendly",
-        "team_rosters": {
-            "Red":   [test_users[0]["id"], test_users[1]["id"]],
-            "Black": [test_users[2]["id"], test_users[3]["id"]],
-            "White": [test_users[4]["id"], test_users[5]["id"]],
-        },
-    }
-    r = requests.post(f"{BASE}/tournaments", json=body, headers=_hdrs(admin_token), timeout=30)
-    assert r.status_code == 200, f"tournament create failed: {r.status_code} {r.text}"
-    return r.json()
+def register(email, password, name, shirt_number=None, preferred_position=None):
+    body = {"email": email, "password": password, "name": name}
+    if shirt_number is not None:
+        body["shirt_number"] = shirt_number
+    if preferred_position is not None:
+        body["preferred_position"] = preferred_position
+    r = requests.post(f"{BASE_URL}/auth/register", json=body, timeout=30)
+    if r.status_code != 200:
+        raise RuntimeError(f"register failed {r.status_code}: {r.text}")
+    j = r.json()
+    return j["token"], j["user"]
 
 
-print("\n== 1. Endpoint basics ==")
-t = create_tournament_with_rosters()
-tid = t["id"]
-fixtures = t["fixtures"]
-assert len(fixtures) == 3
-m1 = fixtures[0]["match_id"]
-home_team = fixtures[0]["home"]
-away_team = fixtures[0]["away"]
-print(f"  tournament={tid} fixture[0]={m1} ({home_team} vs {away_team})")
-
-# Initial standings & fixture state
-check(all(s["P"] == 0 for s in t["standings"]),
-      "initial standings all zeros",
-      t["standings"])
-check(all(fx["live"] is False and fx["played"] is False for fx in t["fixtures"]),
-      "initial fixtures all live=False played=False",
-      t["fixtures"])
-
-# 1a unauth → 401
-r = requests.post(f"{BASE}/matches/{m1}/live-score", json={"team_a_score": 1, "team_b_score": 0}, timeout=30)
-check(r.status_code == 401, "unauth live-score → 401", f"got {r.status_code}: {r.text[:200]}")
-
-# 1b regular non-editor → 403
-r = requests.post(f"{BASE}/matches/{m1}/live-score",
-                  json={"team_a_score": 1, "team_b_score": 0},
-                  headers=_hdrs(regular_token), timeout=30)
-check(r.status_code == 403, "non-editor live-score → 403", f"got {r.status_code}: {r.text[:200]}")
-
-# Confirm initial match status
-r = requests.get(f"{BASE}/matches/{m1}", headers=_hdrs(admin_token), timeout=30)
-check(r.status_code == 200 and r.json().get("status") == "scheduled",
-      "fixture starts as 'scheduled'", f"got {r.status_code} status={r.json().get('status')}")
-
-# 1c admin 0-0 on fresh scheduled match → 200, status stays scheduled
-r = requests.post(f"{BASE}/matches/{m1}/live-score",
-                  json={"team_a_score": 0, "team_b_score": 0},
-                  headers=_hdrs(admin_token), timeout=30)
-check(r.status_code == 200, "admin live-score 0-0 → 200", r.text[:200])
-body0 = r.json() if r.status_code == 200 else {}
-check(body0.get("status") == "scheduled",
-      "status remains 'scheduled' after 0-0", f"got {body0.get('status')}")
-tr = requests.get(f"{BASE}/tournaments/{tid}", headers=_hdrs(admin_token), timeout=30).json()
-fx0 = tr["fixtures"][0]
-check(fx0["score_home"] in (None, 0) and fx0["score_away"] in (None, 0),
-      "after 0-0 no live contribution to standings (fx not counted)",
-      f"fx live={fx0['live']} played={fx0['played']} s_home={fx0['score_home']} s_away={fx0['score_away']}")
-check(all(s["P"] == 0 for s in tr["standings"]),
-      "standings all P=0 after 0-0", tr["standings"])
-
-# 1d admin 1-0 → status flips to in_progress
-r = requests.post(f"{BASE}/matches/{m1}/live-score",
-                  json={"team_a_score": 1, "team_b_score": 0},
-                  headers=_hdrs(admin_token), timeout=30)
-check(r.status_code == 200, "admin live-score 1-0 → 200", r.text[:200])
-body1 = r.json() if r.status_code == 200 else {}
-check(body1.get("status") == "in_progress",
-      "status flips to 'in_progress' on first goal", f"got {body1.get('status')}")
-tr = requests.get(f"{BASE}/tournaments/{tid}", headers=_hdrs(admin_token), timeout=30).json()
-fx0 = tr["fixtures"][0]
-check(fx0["live"] is True and fx0["played"] is False,
-      "fixture[0] live=True played=False after 1-0", fx0)
-check(fx0["score_home"] == 1 and fx0["score_away"] == 0,
-      "fixture[0] score_home=1 score_away=0", fx0)
-
-# Standings after live 1-0
-def stand_of(tr_obj, team):
-    for row in tr_obj["standings"]:
-        if row["team"] == team:
-            return row
-    return None
-
-sh_row = stand_of(tr, home_team)
-sa_row = stand_of(tr, away_team)
-third_team = [n for n in tr["team_names"] if n not in (home_team, away_team)][0]
-st_row = stand_of(tr, third_team)
-check(sh_row["P"] == 1 and sh_row["W"] == 1 and sh_row["GF"] == 1 and sh_row["GA"] == 0
-      and sh_row["GD"] == 1 and sh_row["Pts"] == 3,
-      f"home {home_team}: P1 W1 GF1 GA0 GD1 Pts3 (live)", sh_row)
-check(sa_row["P"] == 1 and sa_row["L"] == 1 and sa_row["GF"] == 0 and sa_row["GA"] == 1
-      and sa_row["GD"] == -1 and sa_row["Pts"] == 0,
-      f"away {away_team}: P1 L1 GF0 GA1 GD-1 Pts0 (live)", sa_row)
-check(st_row["P"] == 0 and st_row["Pts"] == 0,
-      f"third team {third_team}: all zeros", st_row)
-
-# 1e admin 1-2 → score updates, status stays in_progress
-r = requests.post(f"{BASE}/matches/{m1}/live-score",
-                  json={"team_a_score": 1, "team_b_score": 2},
-                  headers=_hdrs(admin_token), timeout=30)
-check(r.status_code == 200, "admin live-score 1-2 → 200", r.text[:200])
-body2 = r.json() if r.status_code == 200 else {}
-check(body2.get("status") == "in_progress",
-      "status still 'in_progress'", f"got {body2.get('status')}")
-tr = requests.get(f"{BASE}/tournaments/{tid}", headers=_hdrs(admin_token), timeout=30).json()
-fx0 = tr["fixtures"][0]
-check(fx0["score_home"] == 1 and fx0["score_away"] == 2,
-      "fixture[0] score 1-2 via tournament GET", fx0)
-
-# 1f upper cap: 100 → 422
-r = requests.post(f"{BASE}/matches/{m1}/live-score",
-                  json={"team_a_score": 100, "team_b_score": 0},
-                  headers=_hdrs(admin_token), timeout=30)
-check(r.status_code == 422, "team_a_score=100 → 422 (le=99)", f"got {r.status_code}: {r.text[:200]}")
-
-# 1g lower cap: -1 → 422
-r = requests.post(f"{BASE}/matches/{m1}/live-score",
-                  json={"team_a_score": -1, "team_b_score": 0},
-                  headers=_hdrs(admin_token), timeout=30)
-check(r.status_code == 422, "team_a_score=-1 → 422 (ge=0)", f"got {r.status_code}: {r.text[:200]}")
+def admin_delete_user(admin_token, user_id):
+    try:
+        requests.delete(f"{BASE_URL}/users/{user_id}", headers=h(admin_token), timeout=30)
+    except Exception:
+        pass
 
 
-print("\n== 3e. Live 1-1 (tied draw) on m1 ==")
-r = requests.post(f"{BASE}/matches/{m1}/live-score",
-                  json={"team_a_score": 1, "team_b_score": 1},
-                  headers=_hdrs(admin_token), timeout=30)
-check(r.status_code == 200, "live-score 1-1 → 200", r.text[:200])
-tr = requests.get(f"{BASE}/tournaments/{tid}", headers=_hdrs(admin_token), timeout=30).json()
-fx0 = tr["fixtures"][0]
-check(fx0["live"] is True and fx0["score_home"] == 1 and fx0["score_away"] == 1,
-      "fixture[0] live=True score 1-1", fx0)
-sh_row = stand_of(tr, home_team); sa_row = stand_of(tr, away_team)
-check(sh_row["P"] == 1 and sh_row["D"] == 1 and sh_row["GF"] == 1 and sh_row["GA"] == 1
-      and sh_row["GD"] == 0 and sh_row["Pts"] == 1,
-      f"home draw: P1 D1 GF1 GA1 GD0 Pts1", sh_row)
-check(sa_row["P"] == 1 and sa_row["D"] == 1 and sa_row["GF"] == 1 and sa_row["GA"] == 1
-      and sa_row["GD"] == 0 and sa_row["Pts"] == 1,
-      f"away draw: P1 D1 GF1 GA1 GD0 Pts1", sa_row)
+def admin_delete_tournament(admin_token, tid):
+    try:
+        requests.delete(f"{BASE_URL}/tournaments/{tid}", headers=h(admin_token), timeout=30)
+    except Exception:
+        pass
 
 
-print("\n== 4. Purity of live-score (no stat side-effects) ==")
-r = requests.get(f"{BASE}/auth/me", headers=_hdrs(admin_token), timeout=30)
-check(r.status_code == 200, "GET /auth/me admin → 200", r.text[:200])
-me_before = r.json()
-watch_fields = ["goals", "assists", "matches_played", "league_points", "rating", "wins", "draws", "losses"]
-baseline = {k: me_before.get(k) for k in watch_fields}
-print(f"  baseline: {baseline}")
-
-for sa, sb in [(2, 2), (3, 2), (3, 3)]:
-    r = requests.post(f"{BASE}/matches/{m1}/live-score",
-                      json={"team_a_score": sa, "team_b_score": sb},
-                      headers=_hdrs(admin_token), timeout=30)
-    check(r.status_code == 200, f"live-score {sa}-{sb} → 200", r.text[:200])
-
-r = requests.get(f"{BASE}/auth/me", headers=_hdrs(admin_token), timeout=30)
-me_after = r.json()
-after = {k: me_after.get(k) for k in watch_fields}
-check(baseline == after,
-      "admin career stats UNCHANGED after live-score bumps",
-      f"before={baseline} after={after}")
-
-# Also verify none of the rostered players had their stats changed
-for u in test_users[:2]:  # check the two Red players
-    rr = requests.post(f"{BASE}/auth/login", json={"email": u["email"], "password": u["password"]}, timeout=30)
-    if rr.status_code == 200:
-        user_after = rr.json()["user"]
-        check(all((user_after.get(k) or 0) == 0 for k in ("goals", "assists", "matches_played", "league_points")),
-              f"roster player {u['email'].split('@')[0]}: stats still 0 after live-score",
-              {k: user_after.get(k) for k in ("goals", "assists", "matches_played", "league_points")})
+def admin_delete_match(admin_token, mid):
+    try:
+        requests.delete(f"{BASE_URL}/matches/{mid}", headers=h(admin_token), timeout=30)
+    except Exception:
+        pass
 
 
-print("\n== 2. Cannot update a finalised match ==")
-# Record final 3-1 result (matches review scenario 3f — verifies flip from live→final)
-r = requests.post(f"{BASE}/matches/{m1}/result",
-                  json={"team_a_score": 3, "team_b_score": 1, "stats": []},
-                  headers=_hdrs(admin_token), timeout=30)
-check(r.status_code == 200, "record final result 3-1 → 200", r.text[:200])
-res_body = r.json() if r.status_code == 200 else {}
-check(res_body.get("status") == "played", "match status='played' after result", res_body.get("status"))
+def main():
+    print(f"\n=== Backend tests against {BASE_URL} ===\n")
 
-# Attempt live-score on played → 400
-r = requests.post(f"{BASE}/matches/{m1}/live-score",
-                  json={"team_a_score": 9, "team_b_score": 9},
-                  headers=_hdrs(admin_token), timeout=30)
-check(r.status_code == 400, "live-score on played match → 400",
-      f"got {r.status_code}: {r.text[:200]}")
-detail = ""
-try:
-    detail = (r.json().get("detail") or "")
-except Exception:
-    pass
-check("finalis" in detail.lower() or "already" in detail.lower(),
-      "400 detail mentions finalised/already", detail)
+    # --- admin login ---
+    admin_tok, admin_user = login(ADMIN_EMAIL, ADMIN_PASSWORD)
+    admin_id = admin_user["id"]
+    record("Admin login", True)
+
+    suf = uuid.uuid4().hex[:8]
+    created_user_ids = []
+    created_tournament_ids = []
+    created_match_ids = []
+
+    try:
+        # ============================================================
+        # 1) DOUBLE ROUND-ROBIN GENERATION
+        # ============================================================
+        print("\n--- 1) Double round-robin ---")
+
+        # 4 fresh users (spec says 4; rosters optional here)
+        for i in range(1, 5):
+            _, u = register(f"drr_{suf}_{i}@example.com", "passw0rd", f"DRRTest {suf} {i}", preferred_position="CM")
+            created_user_ids.append(u["id"])
+
+        body = {
+            "name": f"DRR Cup {suf}",
+            "team_names": ["Red", "Black", "White"],
+            "team_size": 5,
+            "match_type": "friendly",
+            "double_round_robin": True,
+        }
+        r = requests.post(f"{BASE_URL}/tournaments", json=body, headers=h(admin_tok), timeout=30)
+        record("1b POST /tournaments double_round_robin 200", r.status_code == 200, f"status={r.status_code} body={r.text[:200]}")
+        if r.status_code == 200:
+            t = r.json()
+            tid = t["id"]
+            created_tournament_ids.append(tid)
+            fixtures = t["fixtures"]
+            record("1b fixtures.length == 6", len(fixtures) == 6, f"len={len(fixtures)}")
+            if len(fixtures) == 6:
+                first = [(f["home"], f["away"]) for f in fixtures[:3]]
+                second = [(f["home"], f["away"]) for f in fixtures[3:]]
+                expected_swapped = [(a, ha) for (ha, a) in first]
+                record(
+                    "1b second-leg swapped home/away",
+                    second == expected_swapped,
+                    f"first={first} second={second}",
+                )
+
+            admin_delete_tournament(admin_tok, tid)
+            r2 = requests.get(f"{BASE_URL}/tournaments/{tid}", headers=h(admin_tok), timeout=30)
+            record("1c DELETE tournament cascade", r2.status_code == 404, f"get after delete={r2.status_code}")
+            created_tournament_ids.remove(tid)
+
+        # ============================================================
+        # 2) ALL_SAME_DATE + START_TIME
+        # ============================================================
+        print("\n--- 2) all_same_date + start_time ---")
+        body = {
+            "name": f"Same Day Cup {suf}",
+            "team_names": ["Red", "Black", "White"],
+            "team_size": 5,
+            "match_type": "friendly",
+            "start_date": "2026-07-01",
+            "start_time": "20:30",
+            "all_same_date": True,
+        }
+        r = requests.post(f"{BASE_URL}/tournaments", json=body, headers=h(admin_tok), timeout=30)
+        record("2a POST /tournaments all_same_date 200", r.status_code == 200, f"status={r.status_code} body={r.text[:200]}")
+        if r.status_code == 200:
+            t = r.json()
+            tid = t["id"]
+            created_tournament_ids.append(tid)
+            fixtures = t["fixtures"]
+            # need to fetch actual match dates via GET tournament (scheduled_at from match)
+            # fixtures in tournament response include scheduled_at derived from the match.date
+            record("2a exactly 3 fixtures", len(fixtures) == 3, f"len={len(fixtures)}")
+            if len(fixtures) == 3:
+                t0 = fixtures[0]["scheduled_at"]
+                t1 = fixtures[1]["scheduled_at"]
+                t2 = fixtures[2]["scheduled_at"]
+                # All on 2026-07-01
+                record("2a fixture0 starts 2026-07-01T20:30", t0.startswith("2026-07-01T20:30"), f"t0={t0}")
+                record("2a fixture1 starts 2026-07-01T21:30", t1.startswith("2026-07-01T21:30"), f"t1={t1}")
+                record("2a fixture2 starts 2026-07-01T22:30", t2.startswith("2026-07-01T22:30"), f"t2={t2}")
+
+            admin_delete_tournament(admin_tok, tid)
+            created_tournament_ids.remove(tid)
+            record("2b DELETE tournament ok", True)
+
+        # ============================================================
+        # 3) ADD MATCH (B)
+        # ============================================================
+        print("\n--- 3) Add match endpoint ---")
+
+        # Register 6 fresh users for rosters
+        roster_uids = []
+        for i in range(1, 7):
+            _, u = register(f"addm_{suf}_{i}@example.com", "passw0rd", f"AddMatchTest {suf} {i}", preferred_position="CM")
+            roster_uids.append(u["id"])
+            created_user_ids.append(u["id"])
+
+        body = {
+            "name": f"Add Match Cup {suf}",
+            "team_names": ["Red", "Black", "White"],
+            "team_size": 5,
+            "match_type": "friendly",
+            "team_rosters": {
+                "Red": roster_uids[0:2],
+                "Black": roster_uids[2:4],
+                "White": roster_uids[4:6],
+            },
+        }
+        r = requests.post(f"{BASE_URL}/tournaments", json=body, headers=h(admin_tok), timeout=30)
+        record("3a POST /tournaments with rosters 200", r.status_code == 200, f"status={r.status_code} body={r.text[:200]}")
+        if r.status_code != 200:
+            return
+
+        t = r.json()
+        tid = t["id"]
+        created_tournament_ids.append(tid)
+        record("3a initial fixtures.length == 3", len(t["fixtures"]) == 3, f"len={len(t['fixtures'])}")
+
+        # Add a new match
+        add_body = {"home": "Red", "away": "Black", "scheduled_at": "2026-08-15T18:00:00+00:00"}
+        r = requests.post(f"{BASE_URL}/tournaments/{tid}/matches", json=add_body, headers=h(admin_tok), timeout=30)
+        record("3b POST add-match 200", r.status_code == 200, f"status={r.status_code} body={r.text[:200]}")
+        if r.status_code == 200:
+            t2 = r.json()
+            record("3b fixtures.length == 4", len(t2["fixtures"]) == 4, f"len={len(t2['fixtures'])}")
+            # Locate new fixture (round==4)
+            new_fx = None
+            for fx in t2["fixtures"]:
+                if fx["round"] == 4:
+                    new_fx = fx
+                    break
+            record("3b new fixture has round=4", new_fx is not None, "no round=4 fixture")
+            if new_fx:
+                record("3b new fixture home==Red, away==Black",
+                       new_fx["home"] == "Red" and new_fx["away"] == "Black",
+                       f"home={new_fx['home']} away={new_fx['away']}")
+                # GET match
+                mid = new_fx["match_id"]
+                rm = requests.get(f"{BASE_URL}/matches/{mid}", headers=h(admin_tok), timeout=30)
+                record("3b GET new match 200", rm.status_code == 200, f"status={rm.status_code}")
+                if rm.status_code == 200:
+                    m = rm.json()
+                    record("3b match title contains 'Red vs Black'", "Red vs Black" in m["title"], f"title={m['title']}")
+                    record("3b match status scheduled", m["status"] == "scheduled", f"status={m['status']}")
+                    lineup = m.get("lineup") or {}
+                    team_a_ids = [p["user_id"] for p in (lineup.get("team_a") or [])]
+                    team_b_ids = [p["user_id"] for p in (lineup.get("team_b") or [])]
+                    record("3b lineup team_a == Red roster",
+                           set(team_a_ids) == set(roster_uids[0:2]),
+                           f"team_a={team_a_ids}")
+                    record("3b lineup team_b == Black roster",
+                           set(team_b_ids) == set(roster_uids[2:4]),
+                           f"team_b={team_b_ids}")
+                    record("3b lineup has 4 players total", (len(team_a_ids) + len(team_b_ids)) == 4,
+                           f"count={len(team_a_ids)+len(team_b_ids)}")
+                    votes = m.get("votes") or []
+                    record("3b 4 votes set to yes",
+                           len(votes) == 4 and all(v.get("vote") == "yes" for v in votes),
+                           f"votes_len={len(votes)}")
+
+        # 3c Validation
+        r = requests.post(f"{BASE_URL}/tournaments/{tid}/matches",
+                          json={"home": "Red", "away": "Red", "scheduled_at": "2026-08-15T18:00:00+00:00"},
+                          headers=h(admin_tok), timeout=30)
+        record("3c same team → 400", r.status_code == 400, f"status={r.status_code} body={r.text[:150]}")
+        if r.status_code == 400:
+            record("3c error mentions 'different'", "different" in r.text.lower(), f"body={r.text[:100]}")
+
+        r = requests.post(f"{BASE_URL}/tournaments/{tid}/matches",
+                          json={"home": "Yellow", "away": "Black", "scheduled_at": "2026-08-15T18:00:00+00:00"},
+                          headers=h(admin_tok), timeout=30)
+        record("3c unknown team → 400", r.status_code == 400, f"status={r.status_code}")
+        if r.status_code == 400:
+            record("3c error mentions 'one of'", "one of" in r.text.lower() or "home/away" in r.text.lower(), f"body={r.text[:100]}")
+
+        r = requests.post(f"{BASE_URL}/tournaments/{tid}/matches",
+                          json={"home": "Red", "away": "Black", "scheduled_at": "not-a-date"},
+                          headers=h(admin_tok), timeout=30)
+        record("3c bad ISO → 400", r.status_code == 400, f"status={r.status_code}")
+
+        # 3d Non-admin
+        regtok, reguser = register(f"regular_{suf}@example.com", "passw0rd", f"Regular {suf}")
+        created_user_ids.append(reguser["id"])
+        r = requests.post(f"{BASE_URL}/tournaments/{tid}/matches",
+                          json={"home": "Red", "away": "Black", "scheduled_at": "2026-08-15T19:00:00+00:00"},
+                          headers=h(regtok), timeout=30)
+        record("3d non-admin add-match → 403", r.status_code == 403, f"status={r.status_code}")
+
+        # 3e delete tournament
+        admin_delete_tournament(admin_tok, tid)
+        created_tournament_ids.remove(tid)
+        record("3e tournament cleanup", True)
+
+        # ============================================================
+        # 4) DATETIME PATCH (C)
+        # ============================================================
+        print("\n--- 4) PATCH /api/matches/{mid}/datetime ---")
+
+        r = requests.post(f"{BASE_URL}/matches",
+                          json={"title": f"DateTest {suf}", "date": "2026-09-01T19:00:00+00:00",
+                                "team_size": 5, "match_type": "friendly"},
+                          headers=h(admin_tok), timeout=30)
+        record("4a create match 200", r.status_code == 200, f"status={r.status_code} body={r.text[:200]}")
+        if r.status_code == 200:
+            mid = r.json()["id"]
+            created_match_ids.append(mid)
+
+            r = requests.patch(f"{BASE_URL}/matches/{mid}/datetime",
+                               json={"scheduled_at": "2027-12-31T23:45:00+00:00"},
+                               headers=h(admin_tok), timeout=30)
+            record("4b PATCH datetime 200", r.status_code == 200, f"status={r.status_code} body={r.text[:200]}")
+            if r.status_code == 200:
+                rm = requests.get(f"{BASE_URL}/matches/{mid}", headers=h(admin_tok), timeout=30)
+                date_str = rm.json().get("date", "")
+                # Normalized via python datetime.isoformat(); input was +00:00 so should match
+                record("4b date updated to 2027-12-31T23:45",
+                       "2027-12-31T23:45" in date_str,
+                       f"date={date_str}")
+
+            r = requests.patch(f"{BASE_URL}/matches/{mid}/datetime",
+                               json={"scheduled_at": "not-a-date"},
+                               headers=h(admin_tok), timeout=30)
+            record("4c bad ISO → 400", r.status_code == 400, f"status={r.status_code}")
+
+            r = requests.patch(f"{BASE_URL}/matches/{mid}/datetime",
+                               json={"scheduled_at": "2027-12-31T23:45:00+00:00"},
+                               headers=h(regtok), timeout=30)
+            record("4d non-editor → 403", r.status_code == 403, f"status={r.status_code}")
+
+            admin_delete_match(admin_tok, mid)
+            created_match_ids.remove(mid)
+
+        # ============================================================
+        # 5) FINISH MATCH (D)
+        # ============================================================
+        print("\n--- 5) POST /api/matches/{mid}/finish ---")
+
+        # Need 4 registered users to put 2 on each team via lineup override
+        finish_uids = []
+        for i in range(1, 5):
+            _, u = register(f"finish_{suf}_{i}@example.com", "passw0rd", f"FinishTest {suf} {i}", preferred_position="CM")
+            finish_uids.append(u["id"])
+            created_user_ids.append(u["id"])
+
+        # Create league match
+        r = requests.post(f"{BASE_URL}/matches",
+                          json={"title": f"League Test {suf}", "date": "2027-10-01T19:00:00+00:00",
+                                "team_size": 5, "match_type": "league"},
+                          headers=h(admin_tok), timeout=30)
+        record("5a create league match 200", r.status_code == 200, f"body={r.text[:200]}")
+        if r.status_code == 200:
+            mid = r.json()["id"]
+            created_match_ids.append(mid)
+            # Set lineup: 2 users on each team
+            r = requests.put(f"{BASE_URL}/matches/{mid}/lineup",
+                             json={"team_a": finish_uids[0:2], "team_b": finish_uids[2:4]},
+                             headers=h(admin_tok), timeout=30)
+            record("5a PUT lineup 200", r.status_code == 200, f"body={r.text[:200]}")
+
+            # Set live score
+            r = requests.post(f"{BASE_URL}/matches/{mid}/live-score",
+                              json={"team_a_score": 2, "team_b_score": 0},
+                              headers=h(admin_tok), timeout=30)
+            record("5a live-score 2-0 200", r.status_code == 200, f"status={r.status_code}")
+
+            # Get baseline stats for team_a[0] and team_b[0]
+            r = requests.get(f"{BASE_URL}/users", headers=h(admin_tok), timeout=30)
+            users = r.json()
+            ua0_baseline = next(u for u in users if u["id"] == finish_uids[0])
+            ub0_baseline = next(u for u in users if u["id"] == finish_uids[2])
+
+            # Finish
+            r = requests.post(f"{BASE_URL}/matches/{mid}/finish", headers=h(admin_tok), timeout=30)
+            record("5b POST /finish 200", r.status_code == 200, f"status={r.status_code} body={r.text[:200]}")
+            if r.status_code == 200:
+                m = r.json()
+                record("5b status == played", m["status"] == "played", f"status={m['status']}")
+                res = m.get("result") or {}
+                record("5b result.team_a_score == 2", res.get("team_a_score") == 2, f"result={res}")
+                record("5b result.team_b_score == 0", res.get("team_b_score") == 0, f"result={res}")
+                record("5b result.stats == []", res.get("stats") == [], f"stats={res.get('stats')}")
+
+            # Check team_a user stats
+            r = requests.get(f"{BASE_URL}/users", headers=h(admin_tok), timeout=30)
+            users = r.json()
+            ua0_after = next(u for u in users if u["id"] == finish_uids[0])
+            ub0_after = next(u for u in users if u["id"] == finish_uids[2])
+            record("5c team_a user matches_played +=1",
+                   ua0_after["matches_played"] == ua0_baseline["matches_played"] + 1,
+                   f"before={ua0_baseline['matches_played']} after={ua0_after['matches_played']}")
+            record("5c team_a user wins +=1",
+                   ua0_after["wins"] == ua0_baseline["wins"] + 1,
+                   f"before={ua0_baseline['wins']} after={ua0_after['wins']}")
+            record("5c team_a user league_points +=3",
+                   ua0_after["league_points"] == ua0_baseline["league_points"] + 3,
+                   f"before={ua0_baseline['league_points']} after={ua0_after['league_points']}")
+            record("5c team_b user matches_played +=1",
+                   ub0_after["matches_played"] == ub0_baseline["matches_played"] + 1,
+                   f"before={ub0_baseline['matches_played']} after={ub0_after['matches_played']}")
+            record("5c team_b user losses +=1",
+                   ub0_after["losses"] == ub0_baseline["losses"] + 1,
+                   f"before={ub0_baseline['losses']} after={ub0_after['losses']}")
+            record("5c team_b user league_points unchanged",
+                   ub0_after["league_points"] == ub0_baseline["league_points"],
+                   f"before={ub0_baseline['league_points']} after={ub0_after['league_points']}")
+
+            # second /finish → 400
+            r = requests.post(f"{BASE_URL}/matches/{mid}/finish", headers=h(admin_tok), timeout=30)
+            record("5d second /finish → 400", r.status_code == 400, f"status={r.status_code} body={r.text[:150]}")
+            if r.status_code == 400:
+                record("5d error mentions 'already'", "already" in r.text.lower(), f"body={r.text[:150]}")
+
+            admin_delete_match(admin_tok, mid)
+            created_match_ids.remove(mid)
+
+        # 5e DRAW scenario on friendly match
+        r = requests.post(f"{BASE_URL}/matches",
+                          json={"title": f"Draw Test {suf}", "date": "2027-10-02T19:00:00+00:00",
+                                "team_size": 5, "match_type": "friendly"},
+                          headers=h(admin_tok), timeout=30)
+        record("5e create friendly match 200", r.status_code == 200, f"body={r.text[:200]}")
+        if r.status_code == 200:
+            mid = r.json()["id"]
+            created_match_ids.append(mid)
+            requests.put(f"{BASE_URL}/matches/{mid}/lineup",
+                         json={"team_a": finish_uids[0:2], "team_b": finish_uids[2:4]},
+                         headers=h(admin_tok), timeout=30)
+            requests.post(f"{BASE_URL}/matches/{mid}/live-score",
+                          json={"team_a_score": 1, "team_b_score": 1},
+                          headers=h(admin_tok), timeout=30)
+            # baseline (after previous finish)
+            r = requests.get(f"{BASE_URL}/users", headers=h(admin_tok), timeout=30)
+            users = r.json()
+            ua0_pre = next(u for u in users if u["id"] == finish_uids[0])
+
+            r = requests.post(f"{BASE_URL}/matches/{mid}/finish", headers=h(admin_tok), timeout=30)
+            record("5e friendly /finish 200", r.status_code == 200, f"status={r.status_code}")
+
+            r = requests.get(f"{BASE_URL}/users", headers=h(admin_tok), timeout=30)
+            users = r.json()
+            ua0_post = next(u for u in users if u["id"] == finish_uids[0])
+            record("5e friendly draw: matches_played +=1",
+                   ua0_post["matches_played"] == ua0_pre["matches_played"] + 1,
+                   f"before={ua0_pre['matches_played']} after={ua0_post['matches_played']}")
+            record("5e friendly draw: draws +=1",
+                   ua0_post["draws"] == ua0_pre["draws"] + 1,
+                   f"before={ua0_pre['draws']} after={ua0_post['draws']}")
+            record("5e friendly draw: league_points UNCHANGED",
+                   ua0_post["league_points"] == ua0_pre["league_points"],
+                   f"before={ua0_pre['league_points']} after={ua0_post['league_points']}")
+
+            admin_delete_match(admin_tok, mid)
+            created_match_ids.remove(mid)
+
+        # ============================================================
+        # 6) LINEUP POSITIONS (E)
+        # ============================================================
+        print("\n--- 6) POST /api/matches/{mid}/lineup/positions ---")
+
+        r = requests.post(f"{BASE_URL}/matches",
+                          json={"title": f"PosTest {suf}", "date": "2027-11-01T19:00:00+00:00",
+                                "team_size": 5, "match_type": "friendly"},
+                          headers=h(admin_tok), timeout=30)
+        record("6a create match 200", r.status_code == 200)
+        if r.status_code == 200:
+            mid = r.json()["id"]
+            created_match_ids.append(mid)
+            # Build lineup with 2 on each team
+            r = requests.put(f"{BASE_URL}/matches/{mid}/lineup",
+                             json={"team_a": finish_uids[0:2], "team_b": finish_uids[2:4]},
+                             headers=h(admin_tok), timeout=30)
+            record("6a PUT lineup 200", r.status_code == 200, f"body={r.text[:200]}")
+
+            target_uid = finish_uids[0]
+            r = requests.post(f"{BASE_URL}/matches/{mid}/lineup/positions",
+                              json={"positions": {target_uid: {"x": 0.42, "y": 0.69}}},
+                              headers=h(admin_tok), timeout=30)
+            record("6a POST positions 200", r.status_code == 200, f"status={r.status_code} body={r.text[:200]}")
+            if r.status_code == 200:
+                m = r.json()
+                team_a = (m.get("lineup") or {}).get("team_a") or []
+                target_p = next((p for p in team_a if p["user_id"] == target_uid), None)
+                record("6b target player has x=0.42",
+                       target_p is not None and abs(target_p.get("x", 0) - 0.42) < 1e-6,
+                       f"p={target_p}")
+                record("6b target player has y=0.69",
+                       target_p is not None and abs(target_p.get("y", 0) - 0.69) < 1e-6,
+                       f"p={target_p}")
+                # Other players unchanged (no x/y)
+                other_a = next((p for p in team_a if p["user_id"] == finish_uids[1]), None)
+                record("6b other player has no x/y",
+                       other_a is not None and "x" not in other_a and "y" not in other_a,
+                       f"p={other_a}")
+
+            # 6c x > 1.0 → 422
+            r = requests.post(f"{BASE_URL}/matches/{mid}/lineup/positions",
+                              json={"positions": {target_uid: {"x": 1.5, "y": 0.5}}},
+                              headers=h(admin_tok), timeout=30)
+            record("6c x>1.0 → 422", r.status_code == 422, f"status={r.status_code} body={r.text[:150]}")
+
+            # 6d non-editor → 403
+            r = requests.post(f"{BASE_URL}/matches/{mid}/lineup/positions",
+                              json={"positions": {target_uid: {"x": 0.5, "y": 0.5}}},
+                              headers=h(regtok), timeout=30)
+            record("6d non-editor → 403", r.status_code == 403, f"status={r.status_code}")
+
+            admin_delete_match(admin_tok, mid)
+            created_match_ids.remove(mid)
+
+    finally:
+        # ============================================================
+        # 7) CLEANUP
+        # ============================================================
+        print("\n--- 7) Cleanup ---")
+        for tid in list(created_tournament_ids):
+            admin_delete_tournament(admin_tok, tid)
+        for mid in list(created_match_ids):
+            admin_delete_match(admin_tok, mid)
+        for uid in list(created_user_ids):
+            admin_delete_user(admin_tok, uid)
+        record("7 cleanup complete", True)
+
+    print(f"\n=== RESULTS: {len(passes)} PASS / {len(failures)} FAIL ===")
+    if failures:
+        print("\nFAILURES:")
+        for f in failures:
+            print("  -", f)
+        sys.exit(1)
+    sys.exit(0)
 
 
-print("\n== 3f. Tournament standings refresh to final result ==")
-tr = requests.get(f"{BASE}/tournaments/{tid}", headers=_hdrs(admin_token), timeout=30).json()
-fx0 = tr["fixtures"][0]
-check(fx0["played"] is True and fx0["live"] is False,
-      "fixture[0] played=true live=false after final result", fx0)
-check(fx0["score_home"] == 3 and fx0["score_away"] == 1,
-      "fixture[0] score_home=3 score_away=1 (final)", fx0)
-
-sh_row = stand_of(tr, home_team); sa_row = stand_of(tr, away_team)
-check(sh_row["P"] == 1 and sh_row["W"] == 1 and sh_row["L"] == 0 and sh_row["D"] == 0
-      and sh_row["GF"] == 3 and sh_row["GA"] == 1 and sh_row["GD"] == 2 and sh_row["Pts"] == 3,
-      f"home {home_team} final: P1 W1 GF3 GA1 GD2 Pts3", sh_row)
-check(sa_row["P"] == 1 and sa_row["L"] == 1 and sa_row["W"] == 0 and sa_row["D"] == 0
-      and sa_row["GF"] == 1 and sa_row["GA"] == 3 and sa_row["GD"] == -2 and sa_row["Pts"] == 0,
-      f"away {away_team} final: P1 L1 GF1 GA3 GD-2 Pts0", sa_row)
-
-
-print("\n== 3g. Bonus: trigger live on fixture[1] alongside played fixture[0] ==")
-m2 = tr["fixtures"][1]["match_id"]
-fx1_home = tr["fixtures"][1]["home"]
-fx1_away = tr["fixtures"][1]["away"]
-print(f"  m2={m2} ({fx1_home} vs {fx1_away}) → 0-2 live")
-r = requests.post(f"{BASE}/matches/{m2}/live-score",
-                  json={"team_a_score": 0, "team_b_score": 2},
-                  headers=_hdrs(admin_token), timeout=30)
-check(r.status_code == 200, "live-score 0-2 on m2 → 200", r.text[:200])
-
-tr = requests.get(f"{BASE}/tournaments/{tid}", headers=_hdrs(admin_token), timeout=30).json()
-fx1 = tr["fixtures"][1]
-check(fx1["live"] is True and fx1["played"] is False
-      and fx1["score_home"] == 0 and fx1["score_away"] == 2,
-      "fixture[1] live=True score 0-2", fx1)
-
-# fixture[0] should STILL be played
-fx0 = tr["fixtures"][0]
-check(fx0["played"] is True and fx0["live"] is False
-      and fx0["score_home"] == 3 and fx0["score_away"] == 1,
-      "fixture[0] still played=true live=false 3-1 after m2 live", fx0)
-
-# Dynamic expected standings from fixtures
-expected = {n: {"P": 0, "W": 0, "D": 0, "L": 0, "GF": 0, "GA": 0, "Pts": 0} for n in tr["team_names"]}
-for fx in tr["fixtures"]:
-    if fx["score_home"] is None:
-        continue
-    h = fx["home"]; a = fx["away"]
-    sh_ = fx["score_home"]; sa_ = fx["score_away"]
-    expected[h]["P"] += 1; expected[a]["P"] += 1
-    expected[h]["GF"] += sh_; expected[h]["GA"] += sa_
-    expected[a]["GF"] += sa_; expected[a]["GA"] += sh_
-    if sh_ > sa_:
-        expected[h]["W"] += 1; expected[h]["Pts"] += 3; expected[a]["L"] += 1
-    elif sh_ < sa_:
-        expected[a]["W"] += 1; expected[a]["Pts"] += 3; expected[h]["L"] += 1
-    else:
-        expected[h]["D"] += 1; expected[a]["D"] += 1
-        expected[h]["Pts"] += 1; expected[a]["Pts"] += 1
-
-all_ok = True
-mismatch_report = []
-for team, exp in expected.items():
-    row = stand_of(tr, team)
-    for k in ("P", "W", "D", "L", "GF", "GA", "Pts"):
-        if row[k] != exp[k]:
-            all_ok = False
-            mismatch_report.append(f"{team}.{k}: got {row[k]} expected {exp[k]}")
-check(all_ok, "combined standings (played fx0 + live fx1) match expected",
-      "; ".join(mismatch_report) or "all match")
-
-
-print("\n== 5. Cleanup ==")
-r = requests.delete(f"{BASE}/tournaments/{tid}", headers=_hdrs(admin_token), timeout=30)
-check(r.status_code == 200, "DELETE tournament → 200", r.text[:200])
-
-for mid in (m1, m2):
-    rr = requests.get(f"{BASE}/matches/{mid}", headers=_hdrs(admin_token), timeout=30)
-    check(rr.status_code == 404, f"match {mid[:8]}.. cascaded deleted → 404",
-          f"got {rr.status_code}")
-
-for u in test_users:
-    rr = requests.delete(f"{BASE}/users/{u['id']}", headers=_hdrs(admin_token), timeout=30)
-    check(rr.status_code == 200, f"DELETE user {u['id'][:8]}.. → 200", rr.text[:200])
-
-
-print("\n================================================")
-print(f"RESULT: {PASS} passed, {FAIL} failed")
-if FAILURES:
-    print("\nFAILURES:")
-    for f in FAILURES:
-        print(f"  - {f}")
-sys.exit(0 if FAIL == 0 else 1)
+if __name__ == "__main__":
+    main()

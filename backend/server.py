@@ -10,7 +10,7 @@ import logging
 import bcrypt
 import jwt
 from datetime import datetime, timezone, timedelta
-from typing import List, Optional, Literal, Union, Dict
+from typing import List, Optional, Literal, Union, Dict, Any
 import re
 
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, Request
@@ -243,11 +243,39 @@ class TournamentCreateIn(BaseModel):
     team_names: List[str] = Field(min_length=2, max_length=8)
     team_size: int = Field(default=5, ge=4, le=11)
     match_type: Literal["friendly", "league"] = "friendly"
-    start_date: Optional[str] = None  # YYYY-MM-DD; first match scheduled here, others daily
+    start_date: Optional[str] = None  # YYYY-MM-DD
+    start_time: Optional[str] = None  # HH:MM (24h). Default 19:00.
+    # When True, every fixture is scheduled on start_date with hourly increments
+    # (start_time, +1h, +2h, …). When False, one fixture per day at start_time.
+    all_same_date: bool = False
+    # When True, generates a double round-robin (each pair plays twice).
+    double_round_robin: bool = False
     # Optional: map of team_name -> list of user_ids assigned to that team.
     # If provided, each fixture's lineup is pre-populated so players go straight
     # into the pitch view without requiring re-voting.
     team_rosters: Optional[Dict[str, List[str]]] = None
+
+
+class TournamentAddMatchIn(BaseModel):
+    home: str = Field(min_length=1)
+    away: str = Field(min_length=1)
+    scheduled_at: str  # full ISO 8601 datetime, e.g. "2026-06-15T20:30:00+00:00"
+
+
+class MatchDateTimeIn(BaseModel):
+    scheduled_at: str  # full ISO 8601 datetime
+
+
+class PlayerPosition(BaseModel):
+    x: float = Field(ge=0.0, le=1.0)
+    y: float = Field(ge=0.0, le=1.0)
+
+
+class LineupPositionsIn(BaseModel):
+    """Per-player x/y overrides on the pitch (0..1 normalised coordinates).
+    Map is user_id (or guest:<uuid>) -> {x, y}. Players not in the map keep
+    their formation-default position."""
+    positions: Dict[str, PlayerPosition]
 
 
 # ---------- Startup ----------
@@ -1054,6 +1082,127 @@ async def update_live_score(mid: str, data: LiveScoreIn, user=Depends(require_ed
     return _match_public(m, umap)
 
 
+@api.post("/matches/{mid}/lineup/positions")
+async def update_lineup_positions(mid: str, data: LineupPositionsIn, user=Depends(require_editor)):
+    """Apply per-player x/y overrides on the pitch (drag-to-reposition).
+    Players in the request are tagged with x/y in the lineup; others are left
+    untouched. Returns the updated match."""
+    m = await db.matches.find_one({"id": mid}, {"_id": 0})
+    if not m:
+        raise HTTPException(404, "Match not found")
+    lineup = m.get("lineup")
+    if not isinstance(lineup, dict):
+        raise HTTPException(400, "Match has no lineup yet")
+    pos_map = {uid: (p.x, p.y) for uid, p in (data.positions or {}).items()}
+    changed = False
+    for key in ("team_a", "team_b", "team_c"):
+        arr = lineup.get(key) or []
+        for p in arr:
+            uid = p.get("user_id")
+            if uid and uid in pos_map:
+                px, py = pos_map[uid]
+                p["x"] = float(px)
+                p["y"] = float(py)
+                changed = True
+    if changed:
+        await db.matches.update_one({"id": mid}, {"$set": {"lineup": lineup}})
+    m = await db.matches.find_one({"id": mid}, {"_id": 0})
+    umap = await _users_map()
+    return _match_public(m, umap)
+
+
+@api.patch("/matches/{mid}/datetime")
+async def update_match_datetime(mid: str, data: MatchDateTimeIn, user=Depends(require_editor)):
+    """Edit ONLY the scheduled date/time of a match. Accepts a full ISO 8601
+    datetime so callers can choose any time (no 7-day cap)."""
+    m = await db.matches.find_one({"id": mid}, {"_id": 0})
+    if not m:
+        raise HTTPException(404, "Match not found")
+    iso = data.scheduled_at
+    try:
+        # Normalise (accept trailing Z too).
+        dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        normalised = dt.isoformat()
+    except Exception:
+        raise HTTPException(400, "scheduled_at must be a valid ISO datetime")
+    await db.matches.update_one({"id": mid}, {"$set": {"date": normalised}})
+    m = await db.matches.find_one({"id": mid}, {"_id": 0})
+    umap = await _users_map()
+    return _match_public(m, umap)
+
+
+@api.post("/matches/{mid}/finish")
+async def finish_match(mid: str, user=Depends(require_editor)):
+    """Finalise a match using its current live score (score_a/b/c) without
+    requiring per-player goals/assists. Status flips to 'played' and a result
+    doc is created with empty stats. The frontend can subsequently open the
+    Result modal to add scorers/assists if desired."""
+    m = await db.matches.find_one({"id": mid}, {"_id": 0})
+    if not m:
+        raise HTTPException(404, "Match not found")
+    if m.get("status") == "played":
+        raise HTTPException(400, "Match already finalised")
+    sa = int(m.get("score_a") or 0)
+    sb = int(m.get("score_b") or 0)
+    sc_raw = m.get("score_c")
+    third_enabled = bool(m.get("third_team_enabled"))
+    result_doc: Dict[str, Any] = {
+        "team_a_score": sa,
+        "team_b_score": sb,
+        "stats": [],
+    }
+    if third_enabled:
+        result_doc["team_c_score"] = int(sc_raw or 0)
+
+    # Update league_points / wins / draws / losses for participants based on
+    # the team they were on, mirroring the logic of /result.
+    lineup = m.get("lineup") or {}
+    a_ids = [p.get("user_id") for p in lineup.get("team_a") or [] if p.get("user_id") and not str(p.get("user_id")).startswith("guest:")]
+    b_ids = [p.get("user_id") for p in lineup.get("team_b") or [] if p.get("user_id") and not str(p.get("user_id")).startswith("guest:")]
+    c_ids = [p.get("user_id") for p in lineup.get("team_c") or [] if p.get("user_id") and not str(p.get("user_id")).startswith("guest:")]
+
+    def outcome(my: int, others: List[int]) -> str:
+        best_other = max(others) if others else 0
+        if my > best_other:
+            return "W"
+        if my < best_other:
+            return "L"
+        return "D"
+
+    is_league = m.get("match_type") == "league"
+    score_c = int(sc_raw or 0)
+    team_outcomes = {
+        "a": outcome(sa, [sb] + ([score_c] if third_enabled else [])),
+        "b": outcome(sb, [sa] + ([score_c] if third_enabled else [])),
+    }
+    if third_enabled:
+        team_outcomes["c"] = outcome(score_c, [sa, sb])
+
+    for team_key, ids in (("a", a_ids), ("b", b_ids), ("c", c_ids if third_enabled else [])):
+        if not ids:
+            continue
+        oc = team_outcomes[team_key]
+        inc: Dict[str, int] = {"matches_played": 1}
+        if oc == "W":
+            inc["wins"] = 1
+            if is_league:
+                inc["league_points"] = 3
+        elif oc == "D":
+            inc["draws"] = 1
+            if is_league:
+                inc["league_points"] = 1
+        else:
+            inc["losses"] = 1
+        await db.users.update_many({"id": {"$in": ids}}, {"$inc": inc})
+
+    await db.matches.update_one(
+        {"id": mid}, {"$set": {"result": result_doc, "status": "played"}}
+    )
+    m = await db.matches.find_one({"id": mid}, {"_id": 0})
+    umap = await _users_map()
+    return _match_public(m, umap)
+
+
 @api.delete("/matches/{mid}")
 async def delete_match(mid: str, user=Depends(require_editor)):
     m = await db.matches.find_one({"id": mid}, {"_id": 0})
@@ -1392,20 +1541,41 @@ async def create_tournament(data: TournamentCreateIn, admin=Depends(require_admi
             rosters[tname] = mini_list
 
     pairings = _round_robin_pairings(names)
-    # Schedule one fixture per day starting from start_date (or tomorrow).
+    if data.double_round_robin:
+        # Append a return leg with home/away swapped so each pair plays twice.
+        pairings = pairings + [(b, a) for (a, b) in pairings]
+
+    # Parse start time (HH:MM); default 19:00.
+    hh, mm = 19, 0
+    if data.start_time and re.match(r"^\d{1,2}:\d{2}$", data.start_time):
+        try:
+            parts = data.start_time.split(":")
+            hh = max(0, min(23, int(parts[0])))
+            mm = max(0, min(59, int(parts[1])))
+        except Exception:
+            hh, mm = 19, 0
     if data.start_date and DAY_RE.match(data.start_date):
         try:
-            base = datetime.fromisoformat(data.start_date + "T19:00:00+00:00")
+            base = datetime.fromisoformat(
+                f"{data.start_date}T{hh:02d}:{mm:02d}:00+00:00"
+            )
         except Exception:
             base = datetime.now(timezone.utc) + timedelta(days=1)
     else:
-        base = datetime.now(timezone.utc).replace(hour=19, minute=0, second=0, microsecond=0) + timedelta(days=1)
+        base = (datetime.now(timezone.utc) + timedelta(days=1)).replace(
+            hour=hh, minute=mm, second=0, microsecond=0
+        )
 
     tid = str(uuid.uuid4())
     fixtures = []
     for i, (home, away) in enumerate(pairings):
         match_id = str(uuid.uuid4())
-        date_iso = (base + timedelta(days=i)).isoformat()
+        if data.all_same_date:
+            # Same date — increment by 1 hour per fixture.
+            date_iso = (base + timedelta(hours=i)).isoformat()
+        else:
+            # Daily cadence at the chosen time.
+            date_iso = (base + timedelta(days=i)).isoformat()
         # Build pre-populated lineup if rosters were provided so the pitch is
         # ready immediately (no need to vote first).
         lineup_doc = None
@@ -1460,6 +1630,85 @@ async def create_tournament(data: TournamentCreateIn, admin=Depends(require_admi
     await db.tournaments.insert_one(doc)
     matches = await db.matches.find({"tournament_id": tid}, {"_id": 0}).to_list(length=None)
     return _tournament_public(doc, matches)
+
+
+@api.post("/tournaments/{tid}/matches")
+async def add_tournament_match(tid: str, data: TournamentAddMatchIn, admin=Depends(require_admin)):
+    """Manually append a fixture to an existing tournament. Auto pre-populates
+    the match lineup from the tournament's stored team_rosters when available."""
+    t = await db.tournaments.find_one({"id": tid}, {"_id": 0})
+    if not t:
+        raise HTTPException(404, "Tournament not found")
+    names = t.get("team_names") or []
+    if data.home not in names or data.away not in names:
+        raise HTTPException(400, "Home/away must be one of the tournament teams")
+    if data.home == data.away:
+        raise HTTPException(400, "Home and away must be different")
+    # Validate ISO datetime
+    try:
+        datetime.fromisoformat(data.scheduled_at.replace("Z", "+00:00"))
+    except Exception:
+        raise HTTPException(400, "scheduled_at must be a valid ISO datetime")
+
+    rosters_in = t.get("team_rosters") or {}
+    umap = await _users_map()
+    lineup_doc = None
+    votes_doc: Dict[str, str] = {}
+    if rosters_in.get(data.home) or rosters_in.get(data.away):
+        def hydrate(uids):
+            out = []
+            for uid in uids or []:
+                u = umap.get(uid)
+                if not u:
+                    continue
+                mp = _player_mini(u)
+                mp["vote"] = "yes"
+                out.append(mp)
+            return out
+        home_roster = hydrate(rosters_in.get(data.home, []))
+        away_roster = hydrate(rosters_in.get(data.away, []))
+        lineup_doc = {
+            "team_a": home_roster,
+            "team_b": away_roster,
+            "team_c": [],
+            "reserves": [],
+            "team_size": t.get("team_size", 5),
+            "third_team_enabled": False,
+        }
+        for p in home_roster + away_roster:
+            votes_doc[p["user_id"]] = "yes"
+
+    match_id = str(uuid.uuid4())
+    # Round number = current fixtures + 1
+    next_round = (len(t.get("fixtures") or [])) + 1
+    await db.matches.insert_one({
+        "id": match_id,
+        "title": f"{t['name']}: {data.home} vs {data.away}",
+        "date": data.scheduled_at,
+        "team_size": t.get("team_size", 5),
+        "match_type": t.get("match_type", "friendly"),
+        "third_team_enabled": False,
+        "votes": votes_doc,
+        "lineup": lineup_doc,
+        "score_a": 0, "score_b": 0, "score_c": 0,
+        "status": "scheduled",
+        "result": None,
+        "timer_running": False,
+        "timer_started_at": None,
+        "timer_total_seconds": 0,
+        "tournament_id": tid,
+        "tournament_home": data.home,
+        "tournament_away": data.away,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_by": admin["id"],
+    })
+    new_fix = {"match_id": match_id, "home": data.home, "away": data.away, "round": next_round}
+    await db.tournaments.update_one(
+        {"id": tid}, {"$push": {"fixtures": new_fix}}
+    )
+    t = await db.tournaments.find_one({"id": tid}, {"_id": 0})
+    matches = await db.matches.find({"tournament_id": tid}, {"_id": 0}).to_list(length=None)
+    return _tournament_public(t, matches)
 
 
 @api.get("/tournaments")

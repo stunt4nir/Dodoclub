@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -11,6 +11,8 @@ import {
   KeyboardAvoidingView,
   Platform,
   TextInput,
+  PanResponder,
+  type LayoutChangeEvent,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter, useFocusEffect } from 'expo-router';
@@ -36,6 +38,8 @@ type Vote = {
   preferred_positions?: string[];
   rating: number;
   vote: 'yes' | 'no' | 'reserve';
+  x?: number; // optional pitch override (0..1)
+  y?: number; // optional pitch override (0..1)
 };
 
 type Match = {
@@ -147,18 +151,113 @@ function formationCoords(n: number): { x: number; y: number }[] {
   ];
 }
 
-function PlayerMarker({ player, x, y, flip, color, textColor, onPress, selected }: {
+function PlayerMarker({ player, x, y, flip, color, textColor, onPress, selected, pitchSize, onDragEnd }: {
   player?: Vote; x: number; y: number; flip?: boolean; color: string; textColor: string;
   onPress?: () => void; selected?: boolean;
+  pitchSize?: { w: number; h: number };
+  onDragEnd?: (nx: number, ny: number) => void;
 }) {
-  const ay = flip ? 1 - y : y;
+  // If player has explicit pitch overrides, use them. Otherwise compute the
+  // formation-default position (flipping y for team B).
+  const baseAx = (player && typeof player.x === 'number') ? player.x : x;
+  const baseAy = (player && typeof player.y === 'number')
+    ? player.y
+    : (flip ? 1 - y : y);
+
+  const [drag, setDrag] = useState<{ dx: number; dy: number } | null>(null);
+  const dragRef = useRef({ dx: 0, dy: 0, moved: false });
+
   // Name renders below the marker by default; for markers near a goal line,
   // flip it above so the pitch's overflow:hidden doesn't clip it.
-  const nameAbove = ay > 0.85 || ay < 0.15;
+  const nameAbove = baseAy > 0.85 || baseAy < 0.15;
+
+  const panResponder = useMemo(() => {
+    if (!onDragEnd || !player) return null;
+    return PanResponder.create({
+      onStartShouldSetPanResponder: () => true,
+      onMoveShouldSetPanResponder: (_e, gs) =>
+        Math.abs(gs.dx) + Math.abs(gs.dy) > 6,
+      onPanResponderGrant: () => {
+        dragRef.current = { dx: 0, dy: 0, moved: false };
+      },
+      onPanResponderMove: (_e, gs) => {
+        dragRef.current.dx = gs.dx;
+        dragRef.current.dy = gs.dy;
+        if (Math.abs(gs.dx) + Math.abs(gs.dy) > 6) {
+          dragRef.current.moved = true;
+          setDrag({ dx: gs.dx, dy: gs.dy });
+        }
+      },
+      onPanResponderRelease: () => {
+        const { dx, dy, moved } = dragRef.current;
+        setDrag(null);
+        if (moved && pitchSize && pitchSize.w > 0 && pitchSize.h > 0) {
+          const nx = Math.max(0.04, Math.min(0.96, baseAx + dx / pitchSize.w));
+          const ny = Math.max(0.04, Math.min(0.96, baseAy + dy / pitchSize.h));
+          onDragEnd(nx, ny);
+        } else if (onPress) {
+          // Tap (no significant movement) → swap behaviour
+          onPress();
+        }
+      },
+      onPanResponderTerminate: () => {
+        setDrag(null);
+      },
+    });
+  }, [onDragEnd, player, baseAx, baseAy, pitchSize, onPress]);
+
   if (!player) {
-    return <View style={[styles.markerEmpty, { left: `${x * 100}%`, top: `${ay * 100}%`, borderColor: color }]}>
+    return <View style={[styles.markerEmpty, { left: `${x * 100}%`, top: `${(flip ? 1 - y : y) * 100}%`, borderColor: color }]}>
       <Text style={styles.markerEmptyText}>?</Text>
     </View>;
+  }
+
+  const wrapperStyle: any = [
+    styles.markerWrap,
+    { left: `${baseAx * 100}%`, top: `${baseAy * 100}%` },
+    drag && { transform: [{ translateX: drag.dx }, { translateY: drag.dy }] },
+    drag && { zIndex: 50, elevation: 10 },
+  ];
+  const innerMarker = (
+    <View
+      style={[
+        styles.marker,
+        { backgroundColor: color, borderColor: selected ? '#fff' : color },
+        selected && {
+          borderWidth: 3,
+          shadowColor: '#fff',
+          shadowOpacity: 0.9,
+          shadowRadius: 12,
+          shadowOffset: { width: 0, height: 0 },
+          elevation: 8,
+        },
+        drag && { borderColor: '#fff', borderWidth: 3 },
+      ]}
+    >
+      <Text style={[styles.markerNumber, { color: textColor }]}>
+        {player.shirt_number ?? player.name.slice(0, 1).toUpperCase()}
+      </Text>
+    </View>
+  );
+  const nameNode = (
+    <Text
+      style={[styles.markerName, nameAbove ? styles.markerNameAbove : styles.markerNameBelow]}
+      numberOfLines={1}
+    >
+      {player.name.split(' ')[0]}
+    </Text>
+  );
+
+  // When draggable, use a plain View + PanResponder so the gesture doesn't
+  // collide with TouchableOpacity tap. Otherwise, fall back to TouchableOpacity
+  // for simple tap-to-swap (read-only mode).
+  if (panResponder) {
+    return (
+      <View {...panResponder.panHandlers} style={wrapperStyle}>
+        {nameNode}
+        {innerMarker}
+      </View>
+    );
   }
   const Wrapper: any = onPress ? TouchableOpacity : View;
   return (
@@ -166,33 +265,10 @@ function PlayerMarker({ player, x, y, flip, color, textColor, onPress, selected 
       onPress={onPress}
       activeOpacity={0.75}
       hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
-      style={[styles.markerWrap, { left: `${x * 100}%`, top: `${ay * 100}%` }]}
+      style={wrapperStyle}
     >
-      {/* Name is absolutely positioned so it never shifts the marker anchor. */}
-      <Text
-        style={[styles.markerName, nameAbove ? styles.markerNameAbove : styles.markerNameBelow]}
-        numberOfLines={1}
-      >
-        {player.name.split(' ')[0]}
-      </Text>
-      <View
-        style={[
-          styles.marker,
-          { backgroundColor: color, borderColor: selected ? '#fff' : color },
-          selected && {
-            borderWidth: 3,
-            shadowColor: '#fff',
-            shadowOpacity: 0.9,
-            shadowRadius: 12,
-            shadowOffset: { width: 0, height: 0 },
-            elevation: 8,
-          },
-        ]}
-      >
-        <Text style={[styles.markerNumber, { color: textColor }]}>
-          {player.shirt_number ?? player.name.slice(0, 1).toUpperCase()}
-        </Text>
-      </View>
+      {nameNode}
+      {innerMarker}
     </Wrapper>
   );
 }
@@ -297,6 +373,71 @@ export default function MatchDetail() {
       Alert.alert('Error', e.message || 'Failed to update score');
     } finally {
       setLiveBusy(false);
+    }
+  };
+
+  // Finish match — freezes live score as the final, then opens result modal.
+  const finishMatch = () => {
+    if (!match) return;
+    Alert.alert(
+      'Finish match?',
+      `The current score (${match.score_a ?? 0} – ${match.score_b ?? 0}) will be the final result. You can still add scorers/assists from the result modal.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Finish',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const updated = await api<Match>(`/matches/${match.id}/finish`, { method: 'POST' });
+              setMatch(updated);
+              // Auto-open the result modal so admin can quickly add stats
+              setTimeout(() => openResult(), 250);
+            } catch (e: any) {
+              Alert.alert('Failed', e?.message || 'Could not finish match');
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  // Edit match datetime (admin/editor)
+  const [datetimeOpen, setDatetimeOpen] = useState(false);
+  const [editYmd, setEditYmd] = useState('');
+  const [editHm, setEditHm] = useState('19:00');
+  const openDateEdit = () => {
+    if (!match) return;
+    const dt = new Date(match.date);
+    const ymd = dt.toISOString().slice(0, 10);
+    const hm = `${String(dt.getHours()).padStart(2, '0')}:${String(dt.getMinutes()).padStart(2, '0')}`;
+    setEditYmd(ymd);
+    setEditHm(hm);
+    setDatetimeOpen(true);
+  };
+  const saveDatetime = async () => {
+    if (!match) return;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(editYmd) || !/^\d{1,2}:\d{2}$/.test(editHm)) {
+      Alert.alert('Bad input', 'Use YYYY-MM-DD and HH:MM.');
+      return;
+    }
+    const [hhStr, mmStr] = editHm.split(':');
+    const hh = Math.max(0, Math.min(23, parseInt(hhStr || '19', 10) || 19));
+    const mm = Math.max(0, Math.min(59, parseInt(mmStr || '0', 10) || 0));
+    const local = new Date(`${editYmd}T${String(hh).padStart(2, '0')}:${String(mm).padStart(2, '0')}:00`);
+    if (isNaN(local.getTime())) {
+      Alert.alert('Bad date', 'Please check your date and time.');
+      return;
+    }
+    try {
+      const updated = await api<Match>(`/matches/${match.id}/datetime`, {
+        method: 'PATCH',
+        body: { scheduled_at: local.toISOString() },
+      });
+      setMatch(updated);
+      setDatetimeOpen(false);
+    } catch (e: any) {
+      Alert.alert('Failed', e?.message || 'Could not update date');
     }
   };
 
@@ -405,6 +546,40 @@ export default function MatchDetail() {
   }, [match?.timer_started_at, match?.timer_ended_at]);
 
   const canEdit = !!(user && (user.role === 'admin' || user.can_edit_matches));
+
+  // Pitch dimensions for drag math (drag converts px → 0..1 normalised coords)
+  const [pitchSize, setPitchSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
+  const onPitchLayout = (e: LayoutChangeEvent) => {
+    const { width, height } = e.nativeEvent.layout;
+    setPitchSize({ w: width, h: height });
+  };
+  const savePlayerPosition = useCallback(async (uid: string, nx: number, ny: number) => {
+    if (!match) return;
+    // Optimistic update
+    const updateLineup = (lu: any) => {
+      if (!lu) return lu;
+      const next: any = { ...lu };
+      for (const k of ['team_a', 'team_b', 'team_c'] as const) {
+        const arr = next[k];
+        if (Array.isArray(arr)) {
+          next[k] = arr.map((p: any) =>
+            p.user_id === uid ? { ...p, x: nx, y: ny } : p,
+          );
+        }
+      }
+      return next;
+    };
+    setMatch({ ...match, lineup: updateLineup(match.lineup) } as Match);
+    try {
+      const updated = await api<Match>(`/matches/${match.id}/lineup/positions`, {
+        method: 'POST',
+        body: { positions: { [uid]: { x: nx, y: ny } } },
+      });
+      setMatch(updated);
+    } catch (e: any) {
+      Alert.alert('Could not save', e?.message || 'Position not saved');
+    }
+  }, [match]);
 
   const onPitchTap = useCallback(
     async (team: 'a' | 'b', index: number) => {
@@ -701,9 +876,18 @@ export default function MatchDetail() {
         </View>
 
         <Display style={{ fontSize: 34, lineHeight: 36 }}>{match.title}</Display>
-        <Muted style={{ marginTop: 4 }}>
-          {formatDate(match.date)}{match.location ? ` · ${match.location}` : ''}
-        </Muted>
+        {canEdit ? (
+          <TouchableOpacity testID="edit-match-datetime-btn" onPress={openDateEdit} hitSlop={6}>
+            <Muted style={{ marginTop: 4 }}>
+              {formatDate(match.date)}{match.location ? ` · ${match.location}` : ''}
+              {'  '}<Text style={{ color: colors.primary, fontWeight: '900' }}>EDIT</Text>
+            </Muted>
+          </TouchableOpacity>
+        ) : (
+          <Muted style={{ marginTop: 4 }}>
+            {formatDate(match.date)}{match.location ? ` · ${match.location}` : ''}
+          </Muted>
+        )}
         <View style={styles.chipsRow}>
           <View style={styles.chip}>
             <Text style={styles.chipText}>{match.team_size}v{match.team_size}{threeTeam ? 'v' + match.team_size : ''}</Text>
@@ -874,7 +1058,7 @@ export default function MatchDetail() {
           )}
         </View>
 
-        <View style={styles.pitch}>
+        <View style={styles.pitch} onLayout={onPitchLayout}>
           <View style={styles.midLine} />
           <View style={styles.midCircle} />
           <View style={[styles.box, styles.boxTop]} />
@@ -890,6 +1074,12 @@ export default function MatchDetail() {
               textColor={TEAM_COLORS.b.text}
               onPress={canEdit ? () => onPitchTap('b', i) : undefined}
               selected={pitchSel?.team === 'b' && pitchSel.index === i}
+              pitchSize={pitchSize}
+              onDragEnd={
+                canEdit && teamB[i]
+                  ? (nx, ny) => savePlayerPosition(teamB[i].user_id, nx, ny)
+                  : undefined
+              }
             />
           ))}
           {coords.map((c, i) => (
@@ -902,6 +1092,12 @@ export default function MatchDetail() {
               textColor={TEAM_COLORS.a.text}
               onPress={canEdit ? () => onPitchTap('a', i) : undefined}
               selected={pitchSel?.team === 'a' && pitchSel.index === i}
+              pitchSize={pitchSize}
+              onDragEnd={
+                canEdit && teamA[i]
+                  ? (nx, ny) => savePlayerPosition(teamA[i].user_id, nx, ny)
+                  : undefined
+              }
             />
           ))}
         </View>
@@ -917,7 +1113,7 @@ export default function MatchDetail() {
                 ? 'Saving lineup…'
                 : pitchSel
                 ? `Swap selected — tap another player (any team) to swap, or tap again to cancel`
-                : 'Tap two players to swap their pitch positions'}
+                : 'Tap two players to swap · Drag a player to reposition'}
             </Text>
             {pitchSel && !swapBusy && (
               <TouchableOpacity onPress={() => setPitchSel(null)} hitSlop={8}>
@@ -989,10 +1185,28 @@ export default function MatchDetail() {
         ))}
 
         {canEdit && (
-          <TouchableOpacity testID="record-result-btn" onPress={openResult} style={styles.secondaryBtn} activeOpacity={0.85}>
-            <Ionicons name="stats-chart-outline" size={18} color={colors.textPrimary} />
-            <Text style={styles.secondaryBtnText}>{match.result ? 'EDIT RESULT' : 'RECORD RESULT'}</Text>
-          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', gap: spacing.sm }}>
+            <TouchableOpacity
+              testID="record-result-btn"
+              onPress={openResult}
+              style={[styles.secondaryBtn, { flex: 1 }]}
+              activeOpacity={0.85}
+            >
+              <Ionicons name="stats-chart-outline" size={18} color={colors.textPrimary} />
+              <Text style={styles.secondaryBtnText}>{match.result ? 'EDIT RESULT' : 'RECORD RESULT'}</Text>
+            </TouchableOpacity>
+            {match.status !== 'played' && (
+              <TouchableOpacity
+                testID="finish-match-btn"
+                onPress={finishMatch}
+                style={[styles.secondaryBtn, { flex: 1, borderColor: colors.success }]}
+                activeOpacity={0.85}
+              >
+                <Ionicons name="flag" size={18} color={colors.success} />
+                <Text style={[styles.secondaryBtnText, { color: colors.success }]}>FINISH MATCH</Text>
+              </TouchableOpacity>
+            )}
+          </View>
         )}
 
         {/* ---------- Man of the Match ---------- */}
@@ -1254,6 +1468,51 @@ export default function MatchDetail() {
                 {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>SAVE RESULT</Text>}
               </TouchableOpacity>
             </ScrollView>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      {/* Edit match date/time modal */}
+      <Modal visible={datetimeOpen} transparent animationType="slide" onRequestClose={() => setDatetimeOpen(false)}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={styles.modalBg}>
+          <View style={[styles.modalCard, { maxHeight: '70%' }]}>
+            <View style={styles.modalHeader}>
+              <Title style={{ fontSize: 20 }}>Edit Date & Time</Title>
+              <TouchableOpacity testID="close-datetime-modal" onPress={() => setDatetimeOpen(false)} hitSlop={12}>
+                <Ionicons name="close" size={24} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+            <Text style={[styles.label, { marginTop: spacing.sm }]}>DATE (YYYY-MM-DD)</Text>
+            <TextInput
+              testID="edit-match-date-input"
+              value={editYmd}
+              onChangeText={(v) => setEditYmd(v.replace(/[^\d-]/g, '').slice(0, 10))}
+              placeholder="2026-06-15"
+              placeholderTextColor={colors.textMuted}
+              style={[styles.input, { width: 180 }]}
+              keyboardType="numbers-and-punctuation"
+            />
+            <Text style={[styles.label, { marginTop: spacing.md }]}>TIME (HH:MM)</Text>
+            <TextInput
+              testID="edit-match-time-input"
+              value={editHm}
+              onChangeText={(v) => setEditHm(v.replace(/[^\d:]/g, '').slice(0, 5))}
+              placeholder="19:30"
+              placeholderTextColor={colors.textMuted}
+              style={[styles.input, { width: 140 }]}
+              keyboardType="numbers-and-punctuation"
+            />
+            <Muted style={{ fontSize: 11, marginTop: 8 }}>
+              Local time. There is no 7-day cap — pick any future date you like.
+            </Muted>
+            <TouchableOpacity
+              testID="submit-edit-datetime-btn"
+              onPress={saveDatetime}
+              style={[styles.primaryBtn, { marginTop: spacing.lg }]}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.primaryBtnText}>SAVE DATE & TIME</Text>
+            </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>
       </Modal>

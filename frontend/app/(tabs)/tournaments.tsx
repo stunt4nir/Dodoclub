@@ -99,6 +99,7 @@ export default function TournamentsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [modalOpen, setModalOpen] = useState(false);
+  const [addMatchFor, setAddMatchFor] = useState<Tournament | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -199,6 +200,7 @@ export default function TournamentsScreen() {
               onToggle={() => toggle(item.id)}
               onOpenMatch={(mid) => router.push(`/match/${mid}`)}
               onDelete={isAdmin ? () => deleteTournament(item) : undefined}
+              onAddMatch={isAdmin ? () => setAddMatchFor(item) : undefined}
             />
           )}
         />
@@ -209,6 +211,15 @@ export default function TournamentsScreen() {
         onClose={() => setModalOpen(false)}
         onCreated={async () => {
           setModalOpen(false);
+          await load();
+        }}
+      />
+
+      <AddMatchModal
+        tournament={addMatchFor}
+        onClose={() => setAddMatchFor(null)}
+        onCreated={async () => {
+          setAddMatchFor(null);
           await load();
         }}
       />
@@ -225,12 +236,14 @@ function TournamentCard({
   onToggle,
   onOpenMatch,
   onDelete,
+  onAddMatch,
 }: {
   t: Tournament;
   expanded: boolean;
   onToggle: () => void;
   onOpenMatch: (mid: string) => void;
   onDelete?: () => void;
+  onAddMatch?: () => void;
 }) {
   const playedCount = t.fixtures.filter((f) => f.played).length;
   const liveCount = t.fixtures.filter((f) => f.live).length;
@@ -356,15 +369,28 @@ function TournamentCard({
           ))}
 
           {onDelete && (
-            <TouchableOpacity
-              testID={`delete-tournament-${t.id}`}
-              onPress={onDelete}
-              style={styles.dangerBtn}
-              activeOpacity={0.85}
-            >
-              <Ionicons name="trash-outline" size={16} color={colors.danger} />
-              <Text style={styles.dangerBtnText}>DELETE TOURNAMENT</Text>
-            </TouchableOpacity>
+            <View style={{ flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md }}>
+              {onAddMatch && (
+                <TouchableOpacity
+                  testID={`add-match-tournament-${t.id}`}
+                  onPress={onAddMatch}
+                  style={[styles.dangerBtn, { borderColor: colors.primary, flex: 1 }]}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons name="add-circle-outline" size={16} color={colors.primary} />
+                  <Text style={[styles.dangerBtnText, { color: colors.primary }]}>ADD MATCH</Text>
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity
+                testID={`delete-tournament-${t.id}`}
+                onPress={onDelete}
+                style={[styles.dangerBtn, { flex: 1 }]}
+                activeOpacity={0.85}
+              >
+                <Ionicons name="trash-outline" size={16} color={colors.danger} />
+                <Text style={styles.dangerBtnText}>DELETE</Text>
+              </TouchableOpacity>
+            </View>
           )}
         </View>
       )}
@@ -388,6 +414,9 @@ function CreateTournamentModal({
   const [teamSize, setTeamSize] = useState(5);
   const [matchType, setMatchType] = useState<'friendly' | 'league'>('friendly');
   const [dateOffset, setDateOffset] = useState(1);
+  const [startTime, setStartTime] = useState('19:00');
+  const [allSameDate, setAllSameDate] = useState(false);
+  const [doubleRR, setDoubleRR] = useState(false);
   const [teams, setTeams] = useState<string[]>(['Red', 'Black', 'White']);
   // user_id -> team_name (or undefined = unassigned)
   const [assigns, setAssigns] = useState<Record<string, string>>({});
@@ -401,6 +430,9 @@ function CreateTournamentModal({
     setTeamSize(5);
     setMatchType('friendly');
     setDateOffset(1);
+    setStartTime('19:00');
+    setAllSameDate(false);
+    setDoubleRR(false);
     setTeams(['Red', 'Black', 'White']);
     setAssigns({});
     setSaving(false);
@@ -521,6 +553,9 @@ function CreateTournamentModal({
           team_size: teamSize,
           match_type: matchType,
           start_date: ymd,
+          start_time: startTime,
+          all_same_date: allSameDate,
+          double_round_robin: doubleRR,
           team_rosters: rosters,
         },
       });
@@ -614,8 +649,61 @@ function CreateTournamentModal({
               })}
             </View>
             <Muted style={{ fontSize: 11, marginTop: 4 }}>
-              Subsequent fixtures are scheduled one per day at 19:00.
+              {allSameDate
+                ? 'All fixtures on the chosen date — start at the time below, +1 hour each.'
+                : doubleRR
+                  ? 'Each pair plays twice. One fixture per day at the time below.'
+                  : 'Subsequent fixtures are scheduled one per day at the time below.'}
             </Muted>
+
+            <Text style={[styles.label, { marginTop: spacing.md }]}>KICK-OFF TIME (HH:MM)</Text>
+            <TextInput
+              testID="tournament-time-input"
+              value={startTime}
+              onChangeText={(v) => {
+                // Lightly normalise: keep digits and one ':'
+                const cleaned = v.replace(/[^\d:]/g, '').slice(0, 5);
+                setStartTime(cleaned);
+              }}
+              placeholder="19:00"
+              placeholderTextColor={colors.textMuted}
+              style={[styles.input, { width: 120 }]}
+              keyboardType="numbers-and-punctuation"
+            />
+
+            <View style={[styles.toggleRow, { marginTop: spacing.md }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.toggleLabel}>ALL ON SAME DATE</Text>
+                <Muted style={{ fontSize: 11 }}>
+                  Stack every fixture on the chosen date (kick-off, +1h, +2h…).
+                </Muted>
+              </View>
+              <TouchableOpacity
+                testID="tournament-same-date-toggle"
+                onPress={() => setAllSameDate((v) => !v)}
+                style={[styles.toggle, allSameDate && styles.toggleOn]}
+                activeOpacity={0.8}
+              >
+                <View style={[styles.toggleKnob, allSameDate && styles.toggleKnobOn]} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.toggleRow}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.toggleLabel}>DOUBLE ROUND-ROBIN</Text>
+                <Muted style={{ fontSize: 11 }}>
+                  Each pair plays twice (home & away).
+                </Muted>
+              </View>
+              <TouchableOpacity
+                testID="tournament-double-rr-toggle"
+                onPress={() => setDoubleRR((v) => !v)}
+                style={[styles.toggle, doubleRR && styles.toggleOn]}
+                activeOpacity={0.8}
+              >
+                <View style={[styles.toggleKnob, doubleRR && styles.toggleKnobOn]} />
+              </TouchableOpacity>
+            </View>
 
             {/* Teams editor */}
             <View style={styles.sectionHeader}>
@@ -704,6 +792,188 @@ function CreateTournamentModal({
               {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>CREATE TOURNAMENT</Text>}
             </TouchableOpacity>
           </ScrollView>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
+// ============================================================================
+// Add Match Modal — append a custom fixture to an existing tournament
+// ============================================================================
+function AddMatchModal({
+  tournament,
+  onClose,
+  onCreated,
+}: {
+  tournament: Tournament | null;
+  onClose: () => void;
+  onCreated: () => void;
+}) {
+  const [home, setHome] = useState<string | null>(null);
+  const [away, setAway] = useState<string | null>(null);
+  const [dateOffset, setDateOffset] = useState(0);
+  const [time, setTime] = useState('19:00');
+  const [saving, setSaving] = useState(false);
+
+  React.useEffect(() => {
+    if (!tournament) return;
+    setHome(tournament.team_names[0] || null);
+    setAway(tournament.team_names[1] || null);
+    setDateOffset(0);
+    setTime('19:00');
+    setSaving(false);
+  }, [tournament]);
+
+  if (!tournament) return null;
+
+  const submit = async () => {
+    if (!home || !away) {
+      Alert.alert('Pick teams', 'Choose home and away.');
+      return;
+    }
+    if (home === away) {
+      Alert.alert('Same team', 'Home and away must be different.');
+      return;
+    }
+    if (!/^\d{1,2}:\d{2}$/.test(time)) {
+      Alert.alert('Bad time', 'Use HH:MM (24h).');
+      return;
+    }
+    const d = todayPlusDays(dateOffset);
+    const [hhStr, mmStr] = time.split(':');
+    const hh = Math.max(0, Math.min(23, parseInt(hhStr || '19', 10) || 19));
+    const mm = Math.max(0, Math.min(59, parseInt(mmStr || '0', 10) || 0));
+    d.setHours(hh, mm, 0, 0);
+    const iso = d.toISOString();
+    setSaving(true);
+    try {
+      await api(`/tournaments/${tournament.id}/matches`, {
+        method: 'POST',
+        body: { home, away, scheduled_at: iso },
+      });
+      onCreated();
+    } catch (e: any) {
+      Alert.alert('Failed', e?.message || 'Could not add match');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal visible={!!tournament} transparent animationType="slide" onRequestClose={onClose}>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        style={styles.modalBg}
+      >
+        <View style={styles.modalCard}>
+          <View style={styles.modalHeader}>
+            <Title style={{ fontSize: 20 }}>Add Fixture</Title>
+            <TouchableOpacity testID="close-add-match-modal" onPress={onClose} hitSlop={12}>
+              <Ionicons name="close" size={24} color={colors.textSecondary} />
+            </TouchableOpacity>
+          </View>
+          <Muted style={{ marginBottom: spacing.md }}>{tournament.name}</Muted>
+
+          <Text style={styles.label}>HOME TEAM</Text>
+          <View style={styles.row}>
+            {tournament.team_names.map((t) => (
+              <TouchableOpacity
+                key={`home-${t}`}
+                testID={`add-match-home-${t}`}
+                onPress={() => setHome(t)}
+                style={[
+                  styles.choice,
+                  home === t && {
+                    backgroundColor: colorFor(t),
+                    borderColor: colorFor(t),
+                  },
+                ]}
+                activeOpacity={0.8}
+              >
+                <Text style={[
+                  styles.choiceText,
+                  home === t && t !== 'White' && { color: '#fff' },
+                ]}>
+                  {t.toUpperCase()}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <Text style={[styles.label, { marginTop: spacing.md }]}>AWAY TEAM</Text>
+          <View style={styles.row}>
+            {tournament.team_names.map((t) => (
+              <TouchableOpacity
+                key={`away-${t}`}
+                testID={`add-match-away-${t}`}
+                onPress={() => setAway(t)}
+                disabled={t === home}
+                style={[
+                  styles.choice,
+                  away === t && {
+                    backgroundColor: colorFor(t),
+                    borderColor: colorFor(t),
+                  },
+                  t === home && { opacity: 0.3 },
+                ]}
+                activeOpacity={0.8}
+              >
+                <Text style={[
+                  styles.choiceText,
+                  away === t && t !== 'White' && { color: '#fff' },
+                ]}>
+                  {t.toUpperCase()}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <Text style={[styles.label, { marginTop: spacing.md }]}>DATE</Text>
+          <View style={styles.row}>
+            {[0, 1, 2, 3, 4, 5, 6].map((n) => {
+              const d = todayPlusDays(n);
+              const short = n === 0
+                ? 'Today'
+                : d.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' });
+              return (
+                <TouchableOpacity
+                  key={n}
+                  onPress={() => setDateOffset(n)}
+                  style={[styles.choice, dateOffset === n && styles.choiceActive]}
+                  activeOpacity={0.8}
+                >
+                  <Text style={[styles.choiceText, dateOffset === n && styles.choiceTextActive]}>
+                    {short}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+
+          <Text style={[styles.label, { marginTop: spacing.md }]}>KICK-OFF TIME (HH:MM)</Text>
+          <TextInput
+            testID="add-match-time-input"
+            value={time}
+            onChangeText={(v) => {
+              const cleaned = v.replace(/[^\d:]/g, '').slice(0, 5);
+              setTime(cleaned);
+            }}
+            placeholder="19:00"
+            placeholderTextColor={colors.textMuted}
+            style={[styles.input, { width: 120 }]}
+            keyboardType="numbers-and-punctuation"
+          />
+
+          <TouchableOpacity
+            testID="submit-add-match-btn"
+            disabled={saving}
+            onPress={submit}
+            style={[styles.primaryBtn, saving && { opacity: 0.6 }]}
+            activeOpacity={0.85}
+          >
+            {saving ? <ActivityIndicator color="#fff" /> : <Text style={styles.primaryBtnText}>ADD FIXTURE</Text>}
+          </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
     </Modal>
@@ -1053,5 +1323,42 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '900',
     letterSpacing: 1,
+  },
+  toggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+    gap: spacing.md,
+  },
+  toggleLabel: {
+    color: colors.textSecondary,
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 1.5,
+    marginBottom: 2,
+  },
+  toggle: {
+    width: 44,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: colors.surfaceAccent,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 2,
+    justifyContent: 'center',
+  },
+  toggleOn: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  toggleKnob: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: colors.textMuted,
+  },
+  toggleKnobOn: {
+    backgroundColor: '#fff',
+    transform: [{ translateX: 18 }],
   },
 });
