@@ -231,6 +231,14 @@ class MotmVoteIn(BaseModel):
     candidate_id: str  # user_id of the player being voted for
 
 
+class TournamentCreateIn(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+    team_names: List[str] = Field(min_length=2, max_length=8)
+    team_size: int = Field(default=5, ge=4, le=11)
+    match_type: Literal["friendly", "league"] = "friendly"
+    start_date: Optional[str] = None  # YYYY-MM-DD; first match scheduled here, others daily
+
+
 # ---------- Startup ----------
 @app.on_event("startup")
 async def startup():
@@ -242,6 +250,7 @@ async def startup():
     await db.match_comments.create_index([("match_id", 1), ("created_at", 1)])
     await db.availability.create_index([("date", 1)])
     await db.availability.create_index([("date", 1), ("user_id", 1)], unique=True)
+    await db.tournaments.create_index("id", unique=True)
     # Seed admin
     admin_email = os.environ["ADMIN_EMAIL"].lower()
     admin_password = os.environ["ADMIN_PASSWORD"]
@@ -1170,6 +1179,201 @@ async def clear_motm_vote(mid: str, user=Depends(get_current_user)):
     motm_votes = dict(m.get("motm_votes") or {})
     motm_votes.pop(user["id"], None)
     await db.matches.update_one({"id": mid}, {"$set": {"motm_votes": motm_votes}})
+    return {"ok": True}
+
+
+# ---------- Tournaments (Round-robin) ----------
+def _round_robin_pairings(team_names: List[str]) -> List[tuple]:
+    """Berger algorithm. Returns list of (home, away) pairs covering each
+    pair once. Adds a BYE for odd team counts and skips those rounds."""
+    teams = list(team_names)
+    if len(teams) % 2 != 0:
+        teams.append("__BYE__")
+    n = len(teams)
+    pairings: List[tuple] = []
+    fixed = teams[0]
+    rotating = teams[1:]
+    for _ in range(n - 1):
+        round_pairs = [(fixed, rotating[-1])] + [
+            (rotating[i], rotating[-2 - i]) for i in range(n // 2 - 1)
+        ]
+        for h, a in round_pairs:
+            if h != "__BYE__" and a != "__BYE__":
+                pairings.append((h, a))
+        rotating = [rotating[-1]] + rotating[:-1]
+    return pairings
+
+
+def _tournament_public(t: dict, matches: List[dict]) -> dict:
+    """Compute standings on the fly from completed match results."""
+    team_names: List[str] = t.get("team_names") or []
+    standings = {
+        n: {"team": n, "P": 0, "W": 0, "D": 0, "L": 0, "GF": 0, "GA": 0, "GD": 0, "Pts": 0}
+        for n in team_names
+    }
+    by_id = {m["id"]: m for m in matches}
+    fixtures_out = []
+    for fx in t.get("fixtures") or []:
+        m = by_id.get(fx.get("match_id"))
+        result = (m or {}).get("result")
+        home = fx.get("home")
+        away = fx.get("away")
+        played = bool(result)
+        s_home = s_away = None
+        if result and home in standings and away in standings:
+            s_home = int(result.get("team_a_score") or 0)
+            s_away = int(result.get("team_b_score") or 0)
+            standings[home]["P"] += 1
+            standings[away]["P"] += 1
+            standings[home]["GF"] += s_home
+            standings[home]["GA"] += s_away
+            standings[away]["GF"] += s_away
+            standings[away]["GA"] += s_home
+            if s_home > s_away:
+                standings[home]["W"] += 1
+                standings[home]["Pts"] += 3
+                standings[away]["L"] += 1
+            elif s_home < s_away:
+                standings[away]["W"] += 1
+                standings[away]["Pts"] += 3
+                standings[home]["L"] += 1
+            else:
+                standings[home]["D"] += 1
+                standings[away]["D"] += 1
+                standings[home]["Pts"] += 1
+                standings[away]["Pts"] += 1
+        # Per-fixture top scorers/assists derived from match.result.stats
+        scorers = []
+        assisters = []
+        if result and isinstance(result.get("stats"), list):
+            for s in result["stats"]:
+                if (s.get("goals") or 0) > 0:
+                    scorers.append({"user_id": s.get("user_id"), "goals": s.get("goals")})
+                if (s.get("assists") or 0) > 0:
+                    assisters.append({"user_id": s.get("user_id"), "assists": s.get("assists")})
+            scorers.sort(key=lambda r: -r["goals"])
+            assisters.sort(key=lambda r: -r["assists"])
+        fixtures_out.append({
+            "match_id": fx.get("match_id"),
+            "home": home,
+            "away": away,
+            "round": fx.get("round"),
+            "scheduled_at": (m or {}).get("date") if m else None,
+            "played": played,
+            "score_home": s_home,
+            "score_away": s_away,
+            "scorers": scorers,
+            "assisters": assisters,
+        })
+    for s in standings.values():
+        s["GD"] = s["GF"] - s["GA"]
+    table = sorted(standings.values(), key=lambda r: (-r["Pts"], -r["GD"], -r["GF"], r["team"]))
+    return {
+        "id": t["id"],
+        "name": t["name"],
+        "team_names": team_names,
+        "team_size": t.get("team_size"),
+        "match_type": t.get("match_type"),
+        "created_at": t.get("created_at"),
+        "fixtures": fixtures_out,
+        "standings": table,
+        "winner": (table[0]["team"]
+                   if table and all(f["played"] for f in fixtures_out) and len(fixtures_out) > 0
+                   else None),
+        "completed": all(f["played"] for f in fixtures_out) and len(fixtures_out) > 0,
+    }
+
+
+@api.post("/tournaments")
+async def create_tournament(data: TournamentCreateIn, admin=Depends(require_admin)):
+    names = [n.strip() for n in data.team_names if n.strip()]
+    if len(set(names)) != len(names):
+        raise HTTPException(400, "Team names must be unique")
+    if len(names) < 2:
+        raise HTTPException(400, "Need at least 2 teams")
+    pairings = _round_robin_pairings(names)
+    # Schedule one fixture per day starting from start_date (or tomorrow).
+    if data.start_date and DAY_RE.match(data.start_date):
+        try:
+            base = datetime.fromisoformat(data.start_date + "T19:00:00+00:00")
+        except Exception:
+            base = datetime.now(timezone.utc) + timedelta(days=1)
+    else:
+        base = datetime.now(timezone.utc).replace(hour=19, minute=0, second=0, microsecond=0) + timedelta(days=1)
+
+    tid = str(uuid.uuid4())
+    fixtures = []
+    for i, (home, away) in enumerate(pairings):
+        match_id = str(uuid.uuid4())
+        date_iso = (base + timedelta(days=i)).isoformat()
+        await db.matches.insert_one({
+            "id": match_id,
+            "title": f"{data.name}: {home} vs {away}",
+            "date": date_iso,
+            "team_size": data.team_size,
+            "match_type": data.match_type,
+            "third_team_enabled": False,
+            "votes": {},
+            "lineup": None,
+            "score_a": 0, "score_b": 0, "score_c": 0,
+            "status": "scheduled",
+            "result": None,
+            "timer_running": False,
+            "timer_started_at": None,
+            "timer_total_seconds": 0,
+            "tournament_id": tid,
+            "tournament_home": home,
+            "tournament_away": away,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_by": admin["id"],
+        })
+        fixtures.append({"match_id": match_id, "home": home, "away": away, "round": i + 1})
+
+    doc = {
+        "id": tid,
+        "name": data.name,
+        "team_names": names,
+        "team_size": data.team_size,
+        "match_type": data.match_type,
+        "fixtures": fixtures,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_by": admin["id"],
+    }
+    await db.tournaments.insert_one(doc)
+    matches = await db.matches.find({"tournament_id": tid}, {"_id": 0}).to_list(length=None)
+    return _tournament_public(doc, matches)
+
+
+@api.get("/tournaments")
+async def list_tournaments(user=Depends(get_current_user)):
+    cur = db.tournaments.find({}, {"_id": 0}).sort("created_at", -1)
+    items = []
+    async for t in cur:
+        matches = await db.matches.find({"tournament_id": t["id"]}, {"_id": 0}).to_list(length=None)
+        items.append(_tournament_public(t, matches))
+    return items
+
+
+@api.get("/tournaments/{tid}")
+async def get_tournament(tid: str, user=Depends(get_current_user)):
+    t = await db.tournaments.find_one({"id": tid}, {"_id": 0})
+    if not t:
+        raise HTTPException(404, "Tournament not found")
+    matches = await db.matches.find({"tournament_id": tid}, {"_id": 0}).to_list(length=None)
+    return _tournament_public(t, matches)
+
+
+@api.delete("/tournaments/{tid}")
+async def delete_tournament(tid: str, admin=Depends(require_admin)):
+    t = await db.tournaments.find_one({"id": tid}, {"_id": 0})
+    if not t:
+        raise HTTPException(404, "Tournament not found")
+    # Cascade delete linked matches and their comments
+    match_ids = [fx["match_id"] for fx in (t.get("fixtures") or [])]
+    if match_ids:
+        await db.matches.delete_many({"id": {"$in": match_ids}})
+        await db.match_comments.delete_many({"match_id": {"$in": match_ids}})
+    await db.tournaments.delete_one({"id": tid})
     return {"ok": True}
 
 

@@ -88,6 +88,16 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
+        name="tournaments"
+        options={{
+          title: 'Cups',
+          tabBarIcon: ({ color }) => (
+            <Ionicons name="trophy-outline" size={24} color={color} />
+          ),
+          tabBarButtonTestID: 'nav-tournaments-tab',
+        }}
+      />
+      <Tabs.Screen
         name="profile"
         options={{
           title: 'Profile',
