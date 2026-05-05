@@ -90,56 +90,57 @@ function formatDate(d: string) {
 }
 
 function formationCoords(n: number): { x: number; y: number }[] {
-  // y must stay in [0.55, 0.96] so team A stays in the BOTTOM half, and
+  // y must stay in [0.55, 0.93] so team A stays in the BOTTOM half, and
   // team B (flipped to 1-y) stays in the TOP half. That guarantees no
-  // cross-half overlap and a clean gap around the midline.
-  // 0.96 = goal line (GK)
+  // cross-half overlap and a clean gap around the midline. The 0.93 cap
+  // keeps the 44px GK marker + name fully inside the pitch's clip rect.
+  // 0.93 = goal line (GK)
   // 0.78 = defenders
   // 0.65 = midfield
   // 0.56 = front-line (just below midline)
   if (n === 3) return [
-    { x: 0.5, y: 0.96 },
+    { x: 0.5, y: 0.93 },
     { x: 0.3, y: 0.7 }, { x: 0.7, y: 0.7 },
   ];
   if (n === 4) return [
-    { x: 0.5, y: 0.96 },
+    { x: 0.5, y: 0.93 },
     { x: 0.28, y: 0.78 }, { x: 0.72, y: 0.78 },
     { x: 0.5, y: 0.6 },
   ];
   if (n === 5) return [
-    { x: 0.5, y: 0.96 },
+    { x: 0.5, y: 0.93 },
     { x: 0.25, y: 0.8 }, { x: 0.75, y: 0.8 },
     { x: 0.32, y: 0.62 }, { x: 0.68, y: 0.62 },
   ];
   if (n === 6) return [
-    { x: 0.5, y: 0.96 },
+    { x: 0.5, y: 0.93 },
     { x: 0.25, y: 0.82 }, { x: 0.75, y: 0.82 },
     { x: 0.25, y: 0.66 }, { x: 0.75, y: 0.66 },
     { x: 0.5, y: 0.58 },
   ];
   if (n === 7) return [
-    { x: 0.5, y: 0.96 },
+    { x: 0.5, y: 0.93 },
     { x: 0.2, y: 0.82 }, { x: 0.5, y: 0.82 }, { x: 0.8, y: 0.82 },
     { x: 0.28, y: 0.68 }, { x: 0.72, y: 0.68 },
     { x: 0.5, y: 0.58 },
   ];
   if (n === 8) return [
     // 1-3-3-1
-    { x: 0.5, y: 0.96 },
+    { x: 0.5, y: 0.93 },
     { x: 0.2, y: 0.83 }, { x: 0.5, y: 0.83 }, { x: 0.8, y: 0.83 },
     { x: 0.22, y: 0.7 }, { x: 0.5, y: 0.7 }, { x: 0.78, y: 0.7 },
     { x: 0.5, y: 0.58 },
   ];
   if (n === 9) return [
     // 1-3-3-2
-    { x: 0.5, y: 0.96 },
+    { x: 0.5, y: 0.93 },
     { x: 0.2, y: 0.85 }, { x: 0.5, y: 0.85 }, { x: 0.8, y: 0.85 },
     { x: 0.2, y: 0.72 }, { x: 0.5, y: 0.72 }, { x: 0.8, y: 0.72 },
     { x: 0.35, y: 0.58 }, { x: 0.65, y: 0.58 },
   ];
   // n === 11 default 1-4-4-2
   return [
-    { x: 0.5, y: 0.96 },
+    { x: 0.5, y: 0.93 },
     { x: 0.14, y: 0.85 }, { x: 0.38, y: 0.85 }, { x: 0.62, y: 0.85 }, { x: 0.86, y: 0.85 },
     { x: 0.18, y: 0.72 }, { x: 0.4, y: 0.72 }, { x: 0.6, y: 0.72 }, { x: 0.82, y: 0.72 },
     { x: 0.4, y: 0.58 }, { x: 0.6, y: 0.58 },
@@ -151,21 +152,15 @@ function PlayerMarker({ player, x, y, flip, color, textColor, onPress, selected 
   onPress?: () => void; selected?: boolean;
 }) {
   const ay = flip ? 1 - y : y;
-  // Name normally renders below the marker. For markers near the goal lines
-  // (top or bottom edge of the pitch), flip the name above so it doesn't get
-  // clipped by the pitch boundary.
-  const nameAbove = ay > 0.88 || ay < 0.12;
+  // Name renders below the marker by default; for markers near a goal line,
+  // flip it above so the pitch's overflow:hidden doesn't clip it.
+  const nameAbove = ay > 0.85 || ay < 0.15;
   if (!player) {
     return <View style={[styles.markerEmpty, { left: `${x * 100}%`, top: `${ay * 100}%`, borderColor: color }]}>
       <Text style={styles.markerEmptyText}>?</Text>
     </View>;
   }
   const Wrapper: any = onPress ? TouchableOpacity : View;
-  const nameNode = (
-    <Text style={[styles.markerName, nameAbove ? { marginTop: 0, marginBottom: 2 } : null]} numberOfLines={1}>
-      {player.name.split(' ')[0]}
-    </Text>
-  );
   return (
     <Wrapper
       onPress={onPress}
@@ -173,7 +168,13 @@ function PlayerMarker({ player, x, y, flip, color, textColor, onPress, selected 
       hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
       style={[styles.markerWrap, { left: `${x * 100}%`, top: `${ay * 100}%` }]}
     >
-      {nameAbove && nameNode}
+      {/* Name is absolutely positioned so it never shifts the marker anchor. */}
+      <Text
+        style={[styles.markerName, nameAbove ? styles.markerNameAbove : styles.markerNameBelow]}
+        numberOfLines={1}
+      >
+        {player.name.split(' ')[0]}
+      </Text>
       <View
         style={[
           styles.marker,
@@ -192,7 +193,6 @@ function PlayerMarker({ player, x, y, flip, color, textColor, onPress, selected 
           {player.shirt_number ?? player.name.slice(0, 1).toUpperCase()}
         </Text>
       </View>
-      {!nameAbove && nameNode}
     </Wrapper>
   );
 }
@@ -1617,12 +1617,14 @@ const styles = StyleSheet.create({
   box: { position: 'absolute', width: '60%', left: '20%', height: '14%', borderWidth: 2, borderColor: 'rgba(255,255,255,0.35)' },
   boxTop: { top: 0, borderTopWidth: 0 },
   boxBottom: { bottom: 0, borderBottomWidth: 0 },
-  markerWrap: { position: 'absolute', width: 64, marginLeft: -32, marginTop: -32, alignItems: 'center' },
+  markerWrap: { position: 'absolute', width: 44, height: 44, marginLeft: -22, marginTop: -22, alignItems: 'center', justifyContent: 'center' },
   marker: { width: 44, height: 44, borderRadius: 22, borderWidth: 3, alignItems: 'center', justifyContent: 'center' },
   markerEmpty: { position: 'absolute', width: 32, height: 32, borderRadius: 16, marginLeft: -16, marginTop: -16, borderStyle: 'dashed', backgroundColor: 'rgba(255,255,255,0.07)', borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
   markerEmptyText: { color: 'rgba(255,255,255,0.6)', fontWeight: '900', fontSize: 14 },
   markerNumber: { fontWeight: '900', fontSize: 15 },
-  markerName: { marginTop: 2, color: '#fff', fontSize: 10, fontWeight: '800', textAlign: 'center' },
+  markerName: { position: 'absolute', width: 80, marginLeft: -18, color: '#fff', fontSize: 10, fontWeight: '800', textAlign: 'center', textShadowColor: 'rgba(0,0,0,0.85)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2 },
+  markerNameAbove: { top: -14 },
+  markerNameBelow: { top: 46 },
   lineupMeta: { flexDirection: 'row', justifyContent: 'space-between', marginTop: spacing.sm },
   teamLabel: { color: colors.textSecondary, fontSize: 11, fontWeight: '900', letterSpacing: 1.2 },
   thirdTeamCard: { marginTop: spacing.md, backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.borderLight, borderRadius: radii.md, padding: spacing.md },
